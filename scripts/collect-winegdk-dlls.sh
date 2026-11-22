@@ -34,7 +34,7 @@ names=(
 
 found_any=0
 for name in "${names[@]}"; do
-    hit="$(find "$RESULT_LINK" -iname "${name}.dll" -print -quit)"
+    hit="$(find "$RESULT_LINK/" -iname "${name}.dll" -print -quit)"
     if [ -n "$hit" ]; then
         cp -f "$hit" "$OUT_DIR/"
         found_any=1
@@ -42,7 +42,7 @@ for name in "${names[@]}"; do
         echo "warning: ${name}.dll not found under $RESULT_LINK" >&2
     fi
     # xgameruntime ships a sibling .dll.threading data file next to the dll
-    sibling="$(find "$RESULT_LINK" -iname "${name}.dll.threading" -print -quit)"
+    sibling="$(find "$RESULT_LINK/" -iname "${name}.dll.threading" -print -quit)"
     if [ -n "$sibling" ]; then
         cp -f "$sibling" "$OUT_DIR/"
     fi

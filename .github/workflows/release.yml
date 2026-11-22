@@ -54,15 +54,31 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
+      - name: Get WineGDK revision
+        id: winegdk-rev
+        run: echo "rev=$(git -C WineGDK rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Restore cached GDK dlls
+        # Only the few dlls are needed downstream, so cache those instead of
+        # the whole ~2 GB wine build. On a hit every build step is skipped.
+        # Bump the "v1" if you change how WineGDK is patched/built.
+        id: dll-cache
+        uses: actions/cache@v4
+        with:
+          path: build/winegdk-dlls
+          key: winegdk-dlls-v1-${{ steps.winegdk-rev.outputs.rev }}-${{ hashFiles('scripts/collect-winegdk-dlls.sh') }}
       - name: Free disk space
+        if: steps.dll-cache.outputs.cache-hit != 'true'
         uses: jlumbroso/free-disk-space@main
         with:
           preinstalled-runtimes: true
           large-packages: false
       - name: Install Nix
+        if: steps.dll-cache.outputs.cache-hit != 'true'
         uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
+        if: steps.dll-cache.outputs.cache-hit != 'true'
       - name: Drop duplicate IDL entry in WineGDK
+        if: steps.dll-cache.outputs.cache-hit != 'true'
         # include/Makefile.in lists windows.ui.text.core.idl twice, so
         # `make install` aborts with "not overwriting just created
         # windows.ui.text.core.idl". Keep only the first occurrence.
@@ -72,10 +88,12 @@ jobs:
           mv "$f.new" "$f"
           test "$(grep -c 'windows\.ui\.text\.core\.idl' "$f")" -eq 1
       - name: Build WineGDK
+        if: steps.dll-cache.outputs.cache-hit != 'true'
         # path: ref: the submodule is a shallow clone, so git+file: (the default)
         # fails with "revCount is not available". The flake only uses src = ./.
         run: nix build "path:$PWD/WineGDK#wine-gdk64" --out-link build/winegdk-result
       - name: Collect GDK dlls
+        if: steps.dll-cache.outputs.cache-hit != 'true'
         run: ./scripts/collect-winegdk-dlls.sh
       - uses: actions/upload-artifact@v4
         with:

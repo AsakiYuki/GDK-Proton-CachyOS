@@ -22,7 +22,7 @@ jobs:
       - name: Free disk space
         uses: jlumbroso/free-disk-space@main
         with:
-          tool-cache: true
+          preinstalled-runtimes: true
           large-packages: false
       - name: Build fixed winewayland.drv
         # The full make output is far too large for the Actions log viewer
@@ -57,7 +57,7 @@ jobs:
       - name: Free disk space
         uses: jlumbroso/free-disk-space@main
         with:
-          tool-cache: true
+          preinstalled-runtimes: true
           large-packages: false
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main

@@ -76,38 +76,27 @@ if ! command -v make >/dev/null 2>&1; then
     MAKE_BIN="nix-shell -p gnumake --run"
 fi
 
-# NOTE: `make module=winewayland.drv module` pulls in proton-ge-custom's full
-# "all-source"/WINE_DEPENDS graph (ffmpeg, kaldi, vosk, piper, vkd3d, openxr...)
-# even though winewayland.drv itself doesn't need any of them - as of writing,
-# the `piper` dependency fails to build in a clean checkout (its CMake
-# ExternalProject_Add step for onnxruntime extracts to the wrong path, see
-# https://github.com/GloriousEggroll/proton-ge-custom/issues/955 discussion).
-# Known-working alternative: build wine directly (bypassing proton-ge-custom's
-# wrapper Makefile), which only needs wayland + xkbcommon/xkbregistry:
-#
-#   docker run ... "$STEAMRT_IMAGE" bash -c '
-#     cd wine && autoreconf -fiv
-#     # build libxkbcommon (with xkbregistry) + libxml2 first, point
-#     # PKG_CONFIG_PATH/LDFLAGS/CPPFLAGS at them
-#     # generate include/wine/vulkan.h:
-#     #   dlls/winevulkan/make_vulkan -x Vulkan-Headers/registry/vk.xml \
-#     #                                -X Vulkan-Headers/registry/video.xml
-#     # (as of writing this still fails: make_vulkan chokes on a funcpointer
-#     #  type in this vk.xml commit - not yet root-caused)
-#     mkdir -p /tmp/obj && cd /tmp/obj
-#     ../../wine/configure --enable-werror --with-wayland --with-mingw=gcc \
-#       --disable-tests --enable-archs=i386,x86_64 --enable-win64
-#     make -j"$(nproc)" dlls/winewayland.drv
-#   '
-#
-# TODO: finish root-causing the vk.xml/make_vulkan AttributeError above, or
-# get piper's onnxruntime fetch working, then replace this block with the
-# working command and drop this notice.
+# `make module=... module` waits on wine-configure, which by default first
+# builds every WINE_DEPENDS entry: ffmpeg, openfst, kaldi, vosk, piper, openxr,
+# vkd3d. winewayland.drv needs none of the speech/XR libs, and piper in
+# particular fails in a clean checkout (its onnxruntime ExternalProject
+# extracts to the wrong path). Command-line variables override Makefile.in's
+# assignments and are forwarded into the SteamRT container via MAKEOVERRIDES,
+# so trim the list to what wine's configure actually requires here:
+#   ffmpeg            - WINE_AUTOCONF_ARGS passes --with-ffmpeg (hard error if missing)
+#   libxml2/libxkbcommon - wayland driver (xkbcommon + xkbregistry)
+#   libpcap           - kept to match the release configure
+#   vkd3d             - VKD3D_PE_LIBS are hardcoded to its build output
+MODULE_DEPS=(
+    'WINE_DEPENDS=ffmpeg libxml2 libxkbcommon libpcap'
+    'WINE_x86_64_DEPENDS=vkd3d'
+    'WINE_aarch64_DEPENDS='
+)
 echo "Building winewayland.drv module (this pulls the SteamRT SDK container on first run)..."
 if [ "$MAKE_BIN" = "make" ]; then
-    make enable_ccache=0 module=winewayland.drv module
+    make enable_ccache=0 "${MODULE_DEPS[@]}" module=winewayland.drv module
 else
-    nix-shell -p gnumake --run "make enable_ccache=0 module=winewayland.drv module"
+    nix-shell -p gnumake --run "make enable_ccache=0 $(printf '%q ' "${MODULE_DEPS[@]}") module=winewayland.drv module"
 fi
 
 SO_PATH="build/winewayland.drv/lib/wine/x86_64-unix/winewayland.drv.so"

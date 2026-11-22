@@ -35,3 +35,44 @@ if you've done everything correctly, your file structure should look a bit like 
 <img width="772" height="240" alt="image" src="https://github.com/user-attachments/assets/d6e27fc3-ecb4-46be-9448-800535bbc1b6" />
 
 Now if you launch the game, the game should be able to phone home and get online. Just keep in mind that `XUser` is still not implemented so no Microsoft Account login yet.   
+
+## Building
+
+`.github/workflows/release.yml` builds and publishes a release from a GitHub
+Actions `workflow_dispatch` run (set the `proton_version` input, e.g.
+`Proton11-12`). It runs three jobs: `build-decoration-fix`, `build-winegdk`,
+then `package-and-release` which combines both outputs with GE-Proton and
+the mingw-w64 runtime dlls (`scripts/build.sh`) and publishes a GitHub
+Release.
+
+To run the same steps locally: `scripts/fix-wayland-decoration.sh`, then
+`scripts/collect-winegdk-dlls.sh` (after `nix build ./WineGDK#wine-gdk64
+--out-link build/winegdk-result`), then `scripts/build.sh`.
+
+### Wayland window decoration fix
+
+Running under a Wayland compositor that only offers `zxdg_decoration_manager_v1`
+version 1 (niri and other Smithay-based compositors) makes Wine fall back to
+its own bare title bar instead of server-side decorations - this is
+[proton-ge-custom#955](https://github.com/GloriousEggroll/proton-ge-custom/issues/955),
+fixed upstream on `master` but not yet in a tagged GE-Proton release.
+`scripts/fix-wayland-decoration.sh` rebuilds just `winewayland.drv` with that
+fix cherry-picked onto the release tag, instead of waiting for the next
+GE-Proton release or doing a full Proton rebuild.
+
+### Known issues (WIP)
+
+- `scripts/fix-wayland-decoration.sh`: building `winewayland.drv` through
+  proton-ge-custom's own `make module=...` target pulls in its full
+  optional-component dependency graph (ffmpeg/kaldi/vosk/piper/vkd3d/openxr),
+  and `piper`'s onnxruntime fetch currently fails in a clean checkout. The
+  script documents a direct-wine-configure workaround that gets further but
+  still hits an upstream `make_vulkan`/`vk.xml` incompatibility when
+  generating `include/wine/vulkan.h`.
+- `scripts/collect-winegdk-dlls.sh`: `nix build ./WineGDK#wine-gdk64`
+  currently fails in `make install` on a duplicate-basename collision
+  between two generated IDL headers, upstream in
+  [LukasPAH/WineGDK](https://github.com/LukasPAH/WineGDK).
+
+Both need more upstream investigation before the release workflow actually
+produces a working artifact end-to-end.

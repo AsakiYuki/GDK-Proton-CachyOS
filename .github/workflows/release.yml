@@ -1,0 +1,77 @@
+name: Build and release GDK-Proton
+
+on:
+  workflow_dispatch:
+    inputs:
+      proton_version:
+        description: "GE-Proton version to base the build on (e.g. Proton11-12)"
+        required: true
+        default: "Proton11-12"
+
+permissions:
+  contents: write
+
+env:
+  PROTON_VERSION: ${{ github.event.inputs.proton_version }}
+
+jobs:
+  build-decoration-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          large-packages: false
+      - name: Build fixed winewayland.drv
+        run: ./scripts/fix-wayland-decoration.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: decoration-fix
+          path: build/decoration-fix/
+
+  build-winegdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          large-packages: false
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - name: Build WineGDK
+        run: nix build ./WineGDK#wine-gdk64 --out-link build/winegdk-result
+      - name: Collect GDK dlls
+        run: ./scripts/collect-winegdk-dlls.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: winegdk-dlls
+          path: build/winegdk-dlls/
+
+  package-and-release:
+    needs: [build-decoration-fix, build-winegdk]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: decoration-fix
+          path: build/decoration-fix
+      - uses: actions/download-artifact@v4
+        with:
+          name: winegdk-dlls
+          path: build/winegdk-dlls
+      - name: Build package
+        run: ./scripts/build.sh
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: GDK-${{ env.PROTON_VERSION }}-${{ github.run_number }}
+          name: GDK-${{ env.PROTON_VERSION }}
+          files: GDK-${{ env.PROTON_VERSION }}-x86_64.tar.gz

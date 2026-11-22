@@ -78,9 +78,17 @@ else
     echo "warning: build/winegdk-dlls is empty - package will be missing GDK component dlls (xgameruntime etc.)" >&2
 fi
 
-if [ -f build/decoration-fix/winewayland.drv ] && [ -f build/decoration-fix/winewayland.drv.so ]; then
-    cp -f build/decoration-fix/winewayland.drv "$DEST/"
-    cp -f build/decoration-fix/winewayland.drv.so "$DEST_UNIX/"
+FIX_SO="$(ls build/decoration-fix/winewayland.so build/decoration-fix/winewayland.drv.so 2>/dev/null | head -1)"
+if [ -n "$FIX_SO" ]; then
+    # Install under whichever unix lib name this Proton release ships.
+    if [ -e "$DEST_UNIX/winewayland.so" ]; then
+        cp -f "$FIX_SO" "$DEST_UNIX/winewayland.so"
+    else
+        cp -f "$FIX_SO" "$DEST_UNIX/winewayland.drv.so"
+    fi
+    if [ -f build/decoration-fix/winewayland.drv ]; then
+        cp -f build/decoration-fix/winewayland.drv "$DEST/"
+    fi
 else
     echo "warning: build/decoration-fix is incomplete - shipping stock (unfixed) winewayland.drv" >&2
 fi

@@ -99,15 +99,33 @@ else
     nix-shell -p gnumake --run "make enable_ccache=0 $(printf '%q ' "${MODULE_DEPS[@]}") module=winewayland.drv module"
 fi
 
-SO_PATH="build/winewayland.drv/lib/wine/x86_64-unix/winewayland.drv.so"
-DLL_PATH="build/winewayland.drv/lib/wine/x86_64-windows/winewayland.drv"
-
-if [ ! -e "$SO_PATH" ]; then
-    echo "Build did not produce $SO_PATH" >&2
+# Wine 10+ names the unix side winewayland.so (older: winewayland.drv.so).
+# The GE `module` rule copies only the unix lib into build/winewayland.drv/,
+# so also look in the x86_64 object dir. The #955 fix only touches unix code,
+# so the PE side is optional.
+OBJ_DIR="build/build--local/obj-wine-x86_64/dlls/winewayland.drv"
+SO_PATH=""
+for f in build/winewayland.drv/lib/wine/x86_64-unix/winewayland.so \
+         build/winewayland.drv/lib/wine/x86_64-unix/winewayland.drv.so \
+         "$OBJ_DIR/winewayland.so" "$OBJ_DIR/winewayland.drv.so"; do
+    if [ -e "$f" ]; then SO_PATH="$f"; break; fi
+done
+if [ -z "$SO_PATH" ]; then
+    echo "Build did not produce winewayland.so / winewayland.drv.so" >&2
     exit 1
 fi
 
-cp -f "$SO_PATH" "$OUT_DIR/winewayland.drv.so"
-cp -f "$DLL_PATH" "$OUT_DIR/winewayland.drv"
+rm -f "$OUT_DIR"/winewayland*
+cp -f "$SO_PATH" "$OUT_DIR/$(basename "$SO_PATH")"
+echo "Unix lib: $SO_PATH"
+
+for f in build/winewayland.drv/lib/wine/x86_64-windows/winewayland.drv \
+         "$OBJ_DIR/x86_64-windows/winewayland.drv" "$OBJ_DIR/winewayland.drv"; do
+    if [ -f "$f" ]; then
+        cp -f "$f" "$OUT_DIR/winewayland.drv"
+        echo "PE dll: $f"
+        break
+    fi
+done
 
 echo "Fixed winewayland.drv built at $OUT_DIR"

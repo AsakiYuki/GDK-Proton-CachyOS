@@ -46,7 +46,9 @@ jobs:
         uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - name: Build WineGDK
-        run: nix build ./WineGDK#wine-gdk64 --out-link build/winegdk-result
+        # path: ref: the submodule is a shallow clone, so git+file: (the default)
+        # fails with "revCount is not available". The flake only uses src = ./.
+        run: nix build "path:$PWD/WineGDK#wine-gdk64" --out-link build/winegdk-result
       - name: Collect GDK dlls
         run: ./scripts/collect-winegdk-dlls.sh
       - uses: actions/upload-artifact@v4

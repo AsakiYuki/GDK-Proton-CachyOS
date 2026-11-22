@@ -41,14 +41,30 @@ if git log -1 --format=%H | grep -q "$FIX_COMMIT"; then
 elif grep -rq "winewayland-bind-xdg-decoration-manager-version-1" patches/ 2>/dev/null; then
     echo "Fix for #955 already present in this tag, skipping cherry-pick."
 else
-    echo "Fetching and cherry-picking fix for $FIX_ISSUE..."
-    git fetch --depth 2 origin "$FIX_COMMIT"
-    if ! git cherry-pick "$FIX_COMMIT"; then
-        echo "Cherry-pick conflicted (expected: protonprep-valve-staging.sh registration list"
-        echo "diverged from master). Resolve manually in $WORK_DIR, keep only the new patch"
-        echo "file + its 'apply_patch' registration line, then re-run this script."
+    # A plain cherry-pick conflicts because protonprep-valve-staging.sh's
+    # apply_patch list diverged between the tag and master. The fix is just
+    # one new patch file + one registration line, so apply those directly.
+    echo "Fetching fix for $FIX_ISSUE..."
+    git fetch --depth 1 origin "$FIX_COMMIT"
+    PATCH_REL="patches/wine-hotfixes/pending/winewayland-bind-xdg-decoration-manager-version-1.patch"
+    mkdir -p "$(dirname "$PATCH_REL")"
+    git show "$FIX_COMMIT:$PATCH_REL" > "$PATCH_REL"
+
+    PREP="patches/protonprep-valve-staging.sh"
+    LAST_LINE="$(grep -n 'apply_patch "../patches/wine-hotfixes/pending/' "$PREP" | tail -1 | cut -d: -f1)"
+    if [ -z "$LAST_LINE" ]; then
+        echo "Could not find wine-hotfixes/pending apply_patch block in $PREP" >&2
         exit 1
     fi
+    awk -v n="$LAST_LINE" -v p="../$PATCH_REL" '
+        { print }
+        NR == n {
+            print "    # niri/Smithay offer xdg-decoration version 1, which got no server-side decorations (#955)"
+            print "    apply_patch \"" p "\""
+        }' "$PREP" > "$PREP.new"
+    chmod --reference="$PREP" "$PREP.new"
+    mv "$PREP.new" "$PREP"
+    echo "Registered $PATCH_REL in $PREP after line $LAST_LINE."
 fi
 
 echo "Initializing wine submodules..."

@@ -3,14 +3,10 @@
 # result tree into build/winegdk-dlls/, for scripts/build.sh to overlay onto
 # GE-Proton.
 #
-# KNOWN ISSUE (as of writing): `nix build ./WineGDK#wine-gdk64` currently
-# fails during `make install` with:
-#   install: error: not overwriting just created windows.ui.text.core.idl
-# This is a duplicate-basename collision between two generated IDL headers
-# added by the WineGDK fork, upstream in github.com/LukasPAH/WineGDK - not
-# something to patch around blindly here. Needs root-causing upstream (or
-# locally patching WineGDK to rename/dedupe whichever dll's .idl collides)
-# before this script has anything to collect.
+# Note: WineGDK's include/Makefile.in lists windows.ui.text.core.idl twice,
+# which makes `make install` fail with "not overwriting just created
+# windows.ui.text.core.idl". The release workflow drops the duplicate line
+# before `nix build`; do the same when building locally.
 
 set -euo pipefail
 

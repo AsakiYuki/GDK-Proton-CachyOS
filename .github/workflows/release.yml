@@ -62,6 +62,15 @@ jobs:
       - name: Install Nix
         uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
+      - name: Drop duplicate IDL entry in WineGDK
+        # include/Makefile.in lists windows.ui.text.core.idl twice, so
+        # `make install` aborts with "not overwriting just created
+        # windows.ui.text.core.idl". Keep only the first occurrence.
+        run: |
+          f=WineGDK/include/Makefile.in
+          awk '/^\twindows\.ui\.text\.core\.idl \\$/ { if (seen++) next } { print }' "$f" > "$f.new"
+          mv "$f.new" "$f"
+          test "$(grep -c 'windows\.ui\.text\.core\.idl' "$f")" -eq 1
       - name: Build WineGDK
         # path: ref: the submodule is a shallow clone, so git+file: (the default)
         # fails with "revCount is not available". The flake only uses src = ./.

@@ -1,4 +1,4 @@
-From: GDK-Proton
+From: GDK-Proton-CachyOS
 Subject: winewayland: Bind xdg-decoration at the version the compositor offers
 
 Proton-GE #955: the registry handler ignored zxdg_decoration_manager_v1

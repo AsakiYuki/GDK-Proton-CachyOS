@@ -1,5 +1,5 @@
 #!/bin/bash
-# Assembles the final GDK-Proton package:
+# Assembles the final GDK-Proton-CachyOS package:
 #   stock Proton-CachyOS release + patched winewayland.so (Wayland decoration
 #   fix, see scripts/fix-wayland-decoration.sh) + WineGDK component dlls
 #   (see scripts/collect-winegdk-dlls.sh) + Xodus' xgameruntime as

@@ -36,7 +36,7 @@ Proton-CachyOS.
 
 [BedrockOnLinux](https://github.com/Wyze3306/BedrockOnLinux) downloads
 GDK-Proton itself. To use this fork, set `GDK_PROTON_REPO` in
-`bol/config.py` to `AsakiYuki/GDK-Proton`. Then make its downloader pick the
+`bol/config.py` to `AsakiYuki/GDK-Proton-CachyOS`. Then make its downloader pick the
 `-x86_64.tar.gz` or `-x86_64_v3.tar.gz` asset, because a release has two
 archives.
 

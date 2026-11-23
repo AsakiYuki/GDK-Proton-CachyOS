@@ -1,4 +1,4 @@
-name: Build and release GDK-Proton
+name: Build and release GDK-Proton-CachyOS
 
 on:
   workflow_dispatch:

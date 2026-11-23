@@ -33,7 +33,8 @@ jobs:
           mkdir -p build
           ./scripts/fix-wayland-decoration.sh 2>&1 \
             | tee build/decoration-fix.log \
-            | { grep --line-buffered -E '^(Cloning|Fetching|Registered|Initializing|Building|Fixed|Fix |GNU make|Could not)|error:|Error [0-9]+' || true; }
+            | { grep --line-buffered -E '^(Cloning|Fetching|Registered|Initializing|Building|Fixed|Fix |GNU make|Could not)|error:|Error [0-9]+' || true; } \
+            | { grep --line-buffered -v -E "^libtool: +error: +(Could not determine the host path|Continuing, but uninstalled|')" || true; }
       - name: Show end of build log on failure
         if: failure()
         run: tail -n 300 build/decoration-fix.log

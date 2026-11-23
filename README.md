@@ -46,8 +46,19 @@ the mingw-w64 runtime dlls (`scripts/build.sh`) and publishes a GitHub
 Release.
 
 To run the same steps locally: `scripts/fix-wayland-decoration.sh`, then
-`scripts/collect-winegdk-dlls.sh` (after `nix build ./WineGDK#wine-gdk64
---out-link build/winegdk-result`), then `scripts/build.sh`.
+`scripts/collect-winegdk-dlls.sh`, then `scripts/build.sh`.
+
+### GDK component dlls
+
+`scripts/collect-winegdk-dlls.sh` takes the WineGDK dlls from the WineGDK
+build published by [BedrockOnLinux](https://github.com/Wyze3306/BedrockOnLinux)
+(Weather-OS/WineGDK plus their patch set), pinned by SHA-256. It carries
+XUser, so Minecraft signs in to the Microsoft account in-game, together with
+the WinRT dlls it depends on (`windows.web` JSON, `windows.ui`, `gameinput`,
+`windows.storage`). All are PE-only and load in GE-Proton's Wine. Microsoft's
+native `xgameruntime.dll.threading` (used for XThreading; WineGDK's fallback
+crashes the game) comes from Weather-OS/GDK-Proton `release10-32`, also
+pinned. The `WineGDK` submodule is no longer used by the build.
 
 ### Wayland window decoration fix
 
@@ -69,10 +80,6 @@ GE-Proton release or doing a full Proton rebuild.
   script documents a direct-wine-configure workaround that gets further but
   still hits an upstream `make_vulkan`/`vk.xml` incompatibility when
   generating `include/wine/vulkan.h`.
-- `scripts/collect-winegdk-dlls.sh`: `nix build ./WineGDK#wine-gdk64`
-  currently fails in `make install` on a duplicate-basename collision
-  between two generated IDL headers, upstream in
-  [LukasPAH/WineGDK](https://github.com/LukasPAH/WineGDK).
 
-Both need more upstream investigation before the release workflow actually
-produces a working artifact end-to-end.
+This needs more upstream investigation before the decoration fix builds
+reliably end-to-end.

@@ -118,10 +118,25 @@ else
     echo "warning: build/decoration-fix is incomplete - shipping stock (unfixed) winewayland.so" >&2
 fi
 
-# Force wine to refresh its bundled prefix so the new/replaced dlls get
-# picked up on next first run.
+# Keep default_pfx: Proton-CachyOS refuses to start without it ("Default
+# prefix is missing, something is very wrong."), unlike GE, which recreated
+# a deleted one. Instead refresh its copies of the dlls replaced above, so
+# new prefixes start from them, and touch wine.inf so existing prefixes get
+# a wineboot update.
+DEFAULT_SYS32="$PKG_DIR/files/share/default_pfx/drive_c/windows/system32"
+if [ -d "$DEFAULT_SYS32" ]; then
+    for src in build/extra/*.dll build/winegdk-dlls/* \
+               build/xodus-xgameruntime/xgameruntime.dll.threading; do
+        [ -f "$src" ] || continue
+        name="$(basename "$src")"
+        if [ -f "$DEFAULT_SYS32/$name" ]; then
+            cp -f "$DEST/$name" "$DEFAULT_SYS32/$name"
+        fi
+    done
+else
+    echo "warning: $DEFAULT_SYS32 not found - Proton-CachyOS needs default_pfx to start" >&2
+fi
 touch "$PKG_DIR/files/share/wine/wine.inf"
-rm -rf "$PKG_DIR/files/share/default_pfx"
 
 # Name the tree rather than ".", so the archive has no bare "./" entry
 # (BedrockOnLinux's extractor rejects it as an unsafe path).

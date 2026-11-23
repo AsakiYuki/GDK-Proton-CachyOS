@@ -40,13 +40,16 @@ Now if you launch the game, the game should be able to phone home and get online
 
 `.github/workflows/release.yml` builds and publishes a release from a GitHub
 Actions `workflow_dispatch` run. Inputs: `cachyos_tag` (a Proton-CachyOS
-release tag, e.g. `cachyos-11.0-20261015-slr`) and `cachyos_arch` (`x86_64`
-for any CPU, `x86_64_v3` for AVX2 CPUs). It runs `build-decoration-fix`,
-`build-winegdk` and `build-xodus-xgameruntime`, then `package-and-release`,
-which overlays their outputs and the mingw-w64 runtime dlls onto the
-Proton-CachyOS release (`scripts/build.sh`) and publishes a GitHub Release
-named `GDK-Proton-<cachyos_tag>`. The tool registers in Steam under that
-name, so it sits next to a stock Proton-CachyOS rather than replacing it.
+release tag, e.g. `cachyos-11.0-20261015-slr`) and `cachyos_arch` (`both`
+by default; or only `x86_64`, for any CPU, or `x86_64_v3`, for AVX2 CPUs).
+It runs `build-decoration-fix`, `build-winegdk` and
+`build-xodus-xgameruntime` once, then `package` once per arch, which
+overlays their outputs and the mingw-w64 runtime dlls onto that
+Proton-CachyOS build (`scripts/build.sh`), and `release` publishes one
+GitHub Release `GDK-Proton-<cachyos_tag>` with
+`GDK-Proton-<cachyos_tag>-x86_64.tar.gz` and `...-x86_64_v3.tar.gz`. Each
+registers in Steam under its own name (the v3 one with a `-x86_64_v3`
+suffix), so they sit next to each other and to a stock Proton-CachyOS.
 
 To run the same steps locally: `scripts/fix-wayland-decoration.sh`,
 `scripts/collect-winegdk-dlls.sh` and `scripts/build-xodus-xgameruntime.sh`

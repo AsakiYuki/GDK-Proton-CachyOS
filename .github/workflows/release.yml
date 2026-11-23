@@ -8,11 +8,12 @@ on:
         required: true
         default: "cachyos-11.0-20261015-slr"
       cachyos_arch:
-        description: "Proton-CachyOS build: x86_64 (any CPU) or x86_64_v3 (AVX2 CPUs)"
+        description: "Proton-CachyOS builds to package: both, x86_64 (any CPU) or x86_64_v3 (AVX2 CPUs)"
         required: true
-        default: "x86_64"
+        default: "both"
         type: choice
         options:
+          - both
           - x86_64
           - x86_64_v3
 
@@ -21,7 +22,6 @@ permissions:
 
 env:
   CACHYOS_TAG: ${{ github.event.inputs.cachyos_tag }}
-  CACHYOS_ARCH: ${{ github.event.inputs.cachyos_arch }}
 
 jobs:
   build-decoration-fix:
@@ -117,9 +117,17 @@ jobs:
           name: xodus-xgameruntime
           path: build/xodus-xgameruntime/
 
-  package-and-release:
+  package:
     needs: [build-decoration-fix, build-winegdk, build-xodus-xgameruntime]
     runs-on: ubuntu-latest
+    # The overlays are the same for both CachyOS builds (the dlls are
+    # generic x86-64, and both builds share one wine source tree), so only
+    # the base tarball differs per arch.
+    strategy:
+      matrix:
+        arch: ${{ fromJSON(github.event.inputs.cachyos_arch == 'both' && '["x86_64","x86_64_v3"]' || format('["{0}"]', github.event.inputs.cachyos_arch)) }}
+    env:
+      CACHYOS_ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -137,16 +145,26 @@ jobs:
           name: xodus-xgameruntime
           path: build/xodus-xgameruntime
       - name: Build package
-        id: pkg
-        shell: bash
-        run: |
-          ./scripts/build.sh
-          name="GDK-Proton-${CACHYOS_TAG}"
-          [ "$CACHYOS_ARCH" = x86_64 ] || name="${name}-${CACHYOS_ARCH}"
-          echo "name=$name" >> "$GITHUB_OUTPUT"
+        run: ./scripts/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.arch }}
+          path: GDK-Proton-${{ env.CACHYOS_TAG }}-${{ matrix.arch }}.tar.gz
+          # Already compressed; only needed until the release job runs.
+          compression-level: 0
+          retention-days: 1
+
+  release:
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          merge-multiple: true
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.pkg.outputs.name }}-${{ github.run_number }}
-          name: ${{ steps.pkg.outputs.name }}
-          files: ${{ steps.pkg.outputs.name }}-x86_64.tar.gz
+          tag_name: GDK-Proton-${{ env.CACHYOS_TAG }}-${{ github.run_number }}
+          name: GDK-Proton-${{ env.CACHYOS_TAG }}
+          files: GDK-Proton-*.tar.gz

@@ -36,6 +36,8 @@ UPSTREAM_URL="https://github.com/CachyOS/proton-cachyos/releases/download/${CACH
 PKG_NAME="GDK-Proton-${CACHYOS_TAG}"
 [ "$CACHYOS_ARCH" = "x86_64" ] || PKG_NAME="${PKG_NAME}-${CACHYOS_ARCH}"
 PKG_DIR="build/${PKG_NAME}"
+# GDK-Proton-cachyos-11.0-20261015-slr-x86_64.tar.gz / ...-x86_64_v3.tar.gz
+TARBALL="GDK-Proton-${CACHYOS_TAG}-${CACHYOS_ARCH}.tar.gz"
 
 # mingw-w64-x86_64 runtime dlls needed for Minecraft Bedrock's online/TLS support
 brotli=('brotli-1.2.0-1' 'libbrotlicommon libbrotlidec')
@@ -123,7 +125,7 @@ rm -rf "$PKG_DIR/files/share/default_pfx"
 
 # Name the tree rather than ".", so the archive has no bare "./" entry
 # (BedrockOnLinux's extractor rejects it as an unsafe path).
-tar -czf "${PKG_NAME}-x86_64.tar.gz" -C build "$PKG_NAME"
+tar -czf "$TARBALL" -C build "$PKG_NAME"
 rm -rf "$PKG_DIR"
 
-echo "Built ${PKG_NAME}-x86_64.tar.gz"
+echo "Built $TARBALL"

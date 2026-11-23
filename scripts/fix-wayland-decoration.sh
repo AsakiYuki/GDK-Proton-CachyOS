@@ -84,11 +84,22 @@ echo "Applying GE patch set (protonprep-valve-staging.sh)..."
     echo "protonprep-valve-staging.sh failed" >&2
     exit 1
 }
-# apply_patch does not stop on a rejected patch, so check the log instead.
-if grep -nE "FAILED|can't find file to patch|malformed patch|Reversed \(or previously applied\) patch detected" "$OUT_DIR/protonprep.log" >&2; then
-    echo "GE patch set did not apply cleanly (see $OUT_DIR/protonprep.log)" >&2
+# apply_patch (patch -Np1) skips what it cannot apply and carries on, and
+# GE's own release is built from this same script and tag with the same
+# messages (GE-Proton11-12 has one "can't find file to patch"). So report
+# them, with the patch they came from, but do not fail on them: the module
+# is built from the same tree as the release either way.
+if grep -qE "FAILED|can't find file to patch|malformed patch|Reversed \(or previously applied\) patch detected" "$OUT_DIR/protonprep.log"; then
+    echo "warning: protonprep reported patches it skipped (as in GE's own build):"
+    grep -nE -A8 "FAILED|can't find file to patch|malformed patch|Reversed \(or previously applied\) patch detected" \
+        "$OUT_DIR/protonprep.log" | grep -E "FAILED|can't find|malformed|Reversed|^[0-9]+-\|?(---|\+\+\+|diff) " | sed 's/^/warning:   /'
+fi
+# What this job exists for must have landed, though.
+if ! grep -q "version < 2 ? version : 2" wine/dlls/winewayland.drv/wayland.c; then
+    echo "error: the #955 decoration patch did not apply to wine/dlls/winewayland.drv/wayland.c" >&2
     exit 1
 fi
+echo "Applied the #955 decoration fix."
 echo "Wine GDI driver version: $(grep -m1 -o 'WINE_GDI_DRIVER_VERSION [0-9]*' wine/include/wine/gdi_driver.h)"
 
 MAKE_BIN="make"

@@ -1,4 +1,4 @@
-# GDK-Proton
+# GDK-Proton-CachyOS
 
 Builds of [Proton-CachyOS](https://github.com/CachyOS/proton-cachyos) for
 Microsoft GDK games, mainly Minecraft Bedrock Edition. Each release is a stock

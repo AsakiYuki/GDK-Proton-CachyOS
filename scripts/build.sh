@@ -78,7 +78,12 @@ else
     echo "warning: build/winegdk-dlls is empty - package will be missing GDK component dlls (xgameruntime etc.)" >&2
 fi
 
-FIX_SO="$(ls build/decoration-fix/winewayland.so build/decoration-fix/winewayland.drv.so 2>/dev/null | head -1)"
+# (Not `ls a b | head -1`: ls exits 2 when either is missing, which kills
+# the script silently under pipefail.)
+FIX_SO=""
+for f in build/decoration-fix/winewayland.so build/decoration-fix/winewayland.drv.so; do
+    if [ -e "$f" ]; then FIX_SO="$f"; break; fi
+done
 if [ -n "$FIX_SO" ]; then
     # Install under whichever unix lib name this Proton release ships.
     if [ -e "$DEST_UNIX/winewayland.so" ]; then

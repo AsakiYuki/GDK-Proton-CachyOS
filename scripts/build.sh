@@ -129,7 +129,9 @@ if [ -d "$DEFAULT_SYS32" ]; then
                build/xodus-xgameruntime/xgameruntime.dll.threading; do
         [ -f "$src" ] || continue
         name="$(basename "$src")"
-        if [ -f "$DEFAULT_SYS32/$name" ]; then
+        # Proton-CachyOS links most of these to the lib/wine copy, which the
+        # cp above already rewrote in place; only refresh real copies.
+        if [ -f "$DEFAULT_SYS32/$name" ] && ! [ "$DEST/$name" -ef "$DEFAULT_SYS32/$name" ]; then
             cp -f "$DEST/$name" "$DEFAULT_SYS32/$name"
         fi
     done

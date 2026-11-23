@@ -106,6 +106,8 @@ rm -rf "build/GDK-${PROTON_VERSION}/files/share/default_pfx"
 mkdir -p build/proton-package
 rm -rf "build/proton-package/GDK-${PROTON_VERSION}"
 mv "build/GDK-${PROTON_VERSION}" "build/proton-package/GDK-${PROTON_VERSION}"
-tar -czf "GDK-${PROTON_VERSION}-x86_64.tar.gz" -C "build/proton-package" .
+# Name the tree rather than ".", so the archive has no bare "./" entry
+# (BedrockOnLinux's extractor rejects it as an unsafe path).
+tar -czf "GDK-${PROTON_VERSION}-x86_64.tar.gz" -C "build/proton-package" "GDK-${PROTON_VERSION}"
 
 echo "Built GDK-${PROTON_VERSION}-x86_64.tar.gz"

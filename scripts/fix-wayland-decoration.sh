@@ -3,9 +3,10 @@
 # proton-ge-custom#955: winewayland bound zxdg_decoration_manager_v1 at
 # version 2 unconditionally, so compositors that only offer version 1 (niri
 # and other Smithay-based compositors) never got server-side decorations and
-# Wine fell back to its own bare title bar. The fix binds
-# min(advertised version, 2). wine-cachyos still has the old bind as of
-# cachyos-11.0-20261015-slr.
+# Wine fell back to its own bare title bar. KWin offers version 1 as well.
+# The fix drops the `if (version < 2) return;` in that registry branch and
+# binds min(advertised version, 2), as upstream's patch does. wine-cachyos
+# still has the old code as of cachyos-11.0-20261015-slr.
 #
 # The unix side of a wine driver has to match the release's win32u/ntdll
 # exactly (win32u rejects a WINE_GDI_DRIVER_VERSION mismatch), so this
@@ -83,15 +84,22 @@ elif ! grep -q 'zxdg_decoration_manager_v1_interface' "$WAYLAND_C"; then
     echo "error: no zxdg_decoration_manager_v1 bind in $WAYLAND_C" >&2
     exit 1
 fi
-# (Other binds in this file already use the same min() idiom, so look at the
-# decoration bind itself.)
-if ! grep -A1 'zxdg_decoration_manager_v1_interface' "$WAYLAND_C" | grep -q 'version < 2 ? version : 2'; then
-    echo "error: the #955 decoration fix did not apply to $WAYLAND_C" >&2
-    grep -n -A2 'zxdg_decoration_manager_v1_interface' "$WAYLAND_C" >&2 || true
+# The bind alone is not the fix: the registry handler returns early for
+# version 1 before it gets there, so KWin and niri (both offer v1) still got
+# no server-side decorations. Drop that early return inside the
+# zxdg_decoration_manager_v1 branch only.
+sed -i '/"zxdg_decoration_manager_v1") == 0/,/wl_registry_bind/{/^[[:space:]]*if (version < 2) return;[[:space:]]*$/d}' "$WAYLAND_C"
+
+# Check the whole branch, from its strcmp to the end of the bind call.
+DECO_BRANCH="$(sed -n '/"zxdg_decoration_manager_v1") == 0/,/version < 2 ? version : 2);/p' "$WAYLAND_C")"
+if ! grep -q 'version < 2 ? version : 2' <<<"$DECO_BRANCH" \
+   || grep -q 'if (version < 2) return;' <<<"$DECO_BRANCH"; then
+    echo "error: the #955 decoration fix did not apply to $WAYLAND_C:" >&2
+    printf '%s\n' "$DECO_BRANCH" >&2
     exit 1
 fi
 echo "Applied the #955 decoration fix:"
-grep -n -A1 'zxdg_decoration_manager_v1_interface' "$WAYLAND_C"
+printf '%s\n' "$DECO_BRANCH"
 echo "Wine GDI driver version: $(grep -m1 -o 'WINE_GDI_DRIVER_VERSION [0-9]*' "$WINE_SRC/include/wine/gdi_driver.h")"
 
 # --- Build only the unix lib, inside the release's SDK image ---------------

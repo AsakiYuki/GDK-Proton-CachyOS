@@ -7,6 +7,16 @@
 #    "Default prefix is missing, something is very wrong.", as GE-Proton
 #    does. The script's own make_default_prefix() cannot be used: it takes a
 #    `dist_lock` that Valve's script no longer defines.
+# 3. When VKD3D_FRAME_RATE caps the game, present with FIFO (vsync). A
+#    frame-rate limiter without vsync on a fixed-refresh display drifts
+#    against the refresh: at 60 FPS on a 59.88 Hz panel, the presents cross
+#    the vblank every ~8 s and for about a second frames are shown twice and
+#    then dropped, so the game looks like 30 FPS while every overlay counts
+#    60. BedrockOnLinux sets that cap whenever Minecraft has vsync off. The
+#    frame latency drops from vkd3d-proton's default 3 to 1 as well, or the
+#    FIFO queue stays full and the mouse lags ~3 refreshes behind. An
+#    explicit VKD3D_SWAPCHAIN_PRESENT_MODE or VKD3D_SWAPCHAIN_LATENCY_FRAMES
+#    wins; PROTON_ALLOW_TEARING=1 turns all of it off.
 #
 # Usage: patch_proton.sh <path to the proton script>
 
@@ -67,6 +77,27 @@ if COPY_MARK not in text:
     if not anchor:
         sys.exit(f"error: no 'if use_wined3d:' anchor in {path} - Proton's script changed")
     text = text[:anchor.start()] + COPY + text[anchor.start():]
+
+FIFO_MARK = "# GDK-Proton: vsync with a frame limiter"
+FIFO = f"""\
+        {FIFO_MARK}
+        if (self.env.get("VKD3D_FRAME_RATE", "").strip() not in ("", "0")
+                and "VKD3D_SWAPCHAIN_PRESENT_MODE" not in self.env
+                and self.env.get("PROTON_ALLOW_TEARING", "0") in ("", "0")):
+            self.env["VKD3D_SWAPCHAIN_PRESENT_MODE"] = "FIFO"
+            # vkd3d-proton lets the game run 3 frames ahead by default, and
+            # with FIFO the queue stays full, so input waits ~3 refreshes.
+            self.env.setdefault("VKD3D_SWAPCHAIN_LATENCY_FRAMES", "1")
+            log("GDK-Proton: VKD3D_FRAME_RATE is set, presenting with FIFO and "
+                + self.env["VKD3D_SWAPCHAIN_LATENCY_FRAMES"] + " frame(s) of latency")
+
+"""
+
+if FIFO_MARK not in text:
+    anchor = re.search(r"^        if \"WINE_HIDE_AMD_GPU\" not in self.env", text, re.M)
+    if not anchor:
+        sys.exit(f"error: no WINE_HIDE_AMD_GPU anchor in {path} - Proton's script changed")
+    text = text[:anchor.start()] + FIFO + text[anchor.start():]
 
 if CREATE not in text:
     if MISSING not in text:

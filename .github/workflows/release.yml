@@ -27,19 +27,20 @@ jobs:
   build-decoration-fix:
     runs-on: ubuntu-latest
     # Optional: without it build.sh ships CachyOS' stock winewayland.so, which
-    # works everywhere except compositors that need the #955 fix (niri).
+    # works but gets no server-side decorations on compositors that offer
+    # xdg-decoration v1 only (KWin, niri), so Wine draws its own title bar.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - name: Restore cached winewayland.so
         # Inputs are fixed: the CachyOS tag (which pins the wine commit and
-        # SDK image) and the script itself. On a hit the build is skipped.
+        # SDK image), the script and the patch. On a hit the build is skipped.
         # Bump the "v2" to force a rebuild.
         id: deco-cache
         uses: actions/cache@v4
         with:
           path: build/decoration-fix
-          key: decoration-fix-v2-${{ env.CACHYOS_TAG }}-${{ hashFiles('scripts/fix-wayland-decoration.sh') }}
+          key: decoration-fix-v2-${{ env.CACHYOS_TAG }}-${{ hashFiles('scripts/fix-wayland-decoration.sh', 'patches/*.patch') }}
       - name: Free disk space
         if: steps.deco-cache.outputs.cache-hit != 'true'
         uses: jlumbroso/free-disk-space@main

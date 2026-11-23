@@ -1,0 +1,24 @@
+From: GDK-Proton
+Subject: winewayland: Bind xdg-decoration at the version the compositor offers
+
+Proton-GE #955: the registry handler ignored zxdg_decoration_manager_v1
+below version 2, so compositors offering version 1 (KWin, niri and other
+Smithay-based compositors) never got server-side decorations and Wine drew
+its own title bar. Bind min(advertised version, 2) instead.
+
+diff --git a/dlls/winewayland.drv/wayland.c b/dlls/winewayland.drv/wayland.c
+index e457810..a752a58 100644
+--- a/dlls/winewayland.drv/wayland.c
++++ b/dlls/winewayland.drv/wayland.c
+@@ -323,9 +323,9 @@ static void registry_handle_global(void *data, struct wl_registry *registry,
+     else if (strcmp(interface, "zxdg_decoration_manager_v1") == 0)
+     {
+         if (wayland_disable_ssd()) return;
+-        if (version < 2) return;
+         process_wayland.zxdg_decoration_manager_v1 =
+-            wl_registry_bind(registry, id, &zxdg_decoration_manager_v1_interface, 2);
++            wl_registry_bind(registry, id, &zxdg_decoration_manager_v1_interface,
++                             version < 2 ? version : 2);
+     }
+     else if (strcmp(interface, "wp_color_manager_v1") == 0)
+     {

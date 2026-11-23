@@ -1,12 +1,11 @@
 #!/bin/bash
-# Rebuilds Proton-CachyOS' winewayland.so with the fix for
-# proton-ge-custom#955: winewayland bound zxdg_decoration_manager_v1 at
-# version 2 unconditionally, so compositors that only offer version 1 (niri
-# and other Smithay-based compositors) never got server-side decorations and
-# Wine fell back to its own bare title bar. KWin offers version 1 as well.
-# The fix drops the `if (version < 2) return;` in that registry branch and
-# binds min(advertised version, 2), as upstream's patch does. wine-cachyos
-# still has the old code as of cachyos-11.0-20261015-slr.
+# Rebuilds Proton-CachyOS' winewayland.so with
+# patches/winewayland-xdg-decoration-v1.patch, the fix for
+# proton-ge-custom#955: winewayland ignored zxdg_decoration_manager_v1 below
+# version 2, so compositors that only offer version 1 (KWin, niri and other
+# Smithay-based compositors) never got server-side decorations and Wine drew
+# its own bare title bar. wine-cachyos still has the old code as of
+# cachyos-11.0-20261015-slr.
 #
 # The unix side of a wine driver has to match the release's win32u/ntdll
 # exactly (win32u rejects a WINE_GDI_DRIVER_VERSION mismatch), so this
@@ -73,33 +72,15 @@ if [ "$(git -C "$WINE_SRC" rev-parse -q --verify HEAD 2>/dev/null)" != "$WINE_CO
     git -C "$WINE_SRC" checkout -q --detach -f FETCH_HEAD
     rm -rf "$WINE_OBJ"
 fi
+# Start from a clean file, so a rerun does not apply the patch twice.
 git -C "$WINE_SRC" checkout -q -- dlls/winewayland.drv/wayland.c
-
-WAYLAND_C="$WINE_SRC/dlls/winewayland.drv/wayland.c"
-OLD_BIND='&zxdg_decoration_manager_v1_interface, 2);'
-NEW_BIND='\&zxdg_decoration_manager_v1_interface,\n                             version < 2 ? version : 2);'
-if grep -qF "$OLD_BIND" "$WAYLAND_C"; then
-    sed -i "s|$OLD_BIND|$NEW_BIND|" "$WAYLAND_C"
-elif ! grep -q 'zxdg_decoration_manager_v1_interface' "$WAYLAND_C"; then
-    echo "error: no zxdg_decoration_manager_v1 bind in $WAYLAND_C" >&2
-    exit 1
-fi
-# The bind alone is not the fix: the registry handler returns early for
-# version 1 before it gets there, so KWin and niri (both offer v1) still got
-# no server-side decorations. Drop that early return inside the
-# zxdg_decoration_manager_v1 branch only.
-sed -i '/"zxdg_decoration_manager_v1") == 0/,/wl_registry_bind/{/^[[:space:]]*if (version < 2) return;[[:space:]]*$/d}' "$WAYLAND_C"
-
-# Check the whole branch, from its strcmp to the end of the bind call.
-DECO_BRANCH="$(sed -n '/"zxdg_decoration_manager_v1") == 0/,/version < 2 ? version : 2);/p' "$WAYLAND_C")"
-if ! grep -q 'version < 2 ? version : 2' <<<"$DECO_BRANCH" \
-   || grep -q 'if (version < 2) return;' <<<"$DECO_BRANCH"; then
-    echo "error: the #955 decoration fix did not apply to $WAYLAND_C:" >&2
-    printf '%s\n' "$DECO_BRANCH" >&2
+PATCH="$ROOT_DIR/patches/winewayland-xdg-decoration-v1.patch"
+if ! git -C "$WINE_SRC" apply "$PATCH"; then
+    echo "error: $PATCH does not apply to wine-cachyos@${WINE_COMMIT:0:12}" >&2
     exit 1
 fi
 echo "Applied the #955 decoration fix:"
-printf '%s\n' "$DECO_BRANCH"
+git -C "$WINE_SRC" diff -U1 dlls/winewayland.drv/wayland.c
 echo "Wine GDI driver version: $(grep -m1 -o 'WINE_GDI_DRIVER_VERSION [0-9]*' "$WINE_SRC/include/wine/gdi_driver.h")"
 
 # --- Build only the unix lib, inside the release's SDK image ---------------

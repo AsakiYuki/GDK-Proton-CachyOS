@@ -88,12 +88,13 @@ replace WineGDK's outright.
 ### Wayland window decoration fix
 
 Running under a Wayland compositor that only offers `zxdg_decoration_manager_v1`
-version 1 (niri and other Smithay-based compositors) makes Wine fall back to
+version 1 (KWin, niri and other Smithay-based compositors) makes Wine fall back to
 its own bare title bar instead of server-side decorations
 ([proton-ge-custom#955](https://github.com/GloriousEggroll/proton-ge-custom/issues/955)).
-Proton-CachyOS' wine still binds version 2 unconditionally.
-`scripts/fix-wayland-decoration.sh` rebuilds just `winewayland.so` with the
-bind clamped to the advertised version. To match the release exactly, it
+Proton-CachyOS' wine still ignores the global below version 2.
+`scripts/fix-wayland-decoration.sh` rebuilds just `winewayland.so` with
+`patches/winewayland-xdg-decoration-v1.patch`, which binds the version the
+compositor offers (at most 2). To match the release exactly, it
 builds the `wine-cachyos` commit the release tag pins, inside the Steam
 Runtime SDK image that tag's `Makefile.in` names, against the same
 `libxkbcommon` submodule Proton ships. The job is optional: if it fails, the

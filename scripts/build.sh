@@ -98,19 +98,30 @@ grep -q "\"${PKG_NAME}\"" "$PKG_DIR/compatibilitytool.vdf" \
 DEST="$PKG_DIR/files/lib/wine/x86_64-windows"
 DEST_UNIX="$PKG_DIR/files/lib/wine/x86_64-unix"
 
-cp -f build/extra/*.dll "$DEST/"
+[ -n "$(ls -A build/winegdk-dlls 2>/dev/null)" ] \
+    || echo "warning: build/winegdk-dlls is empty - package will be missing GDK component dlls (xgameruntime etc.)" >&2
+[ -f build/xodus-xgameruntime/xgameruntime.dll.threading ] \
+    || echo "warning: build/xodus-xgameruntime is empty - XThreading will fall back to WineGDK's own implementation" >&2
 
-if [ -d build/winegdk-dlls ] && [ -n "$(ls -A build/winegdk-dlls 2>/dev/null)" ]; then
-    cp -f build/winegdk-dlls/* "$DEST/"
-else
-    echo "warning: build/winegdk-dlls is empty - package will be missing GDK component dlls (xgameruntime etc.)" >&2
-fi
+# Proton-CachyOS refuses to start without default_pfx (patch_proton.sh only
+# recreates a deleted one), so keep it, with the overlaid dlls in it: most of
+# its system32 dlls are links to the lib/wine copies, so they follow the
+# copy into $DEST; real copies are refreshed so new prefixes start from them.
+DEFAULT_SYS32="$PKG_DIR/files/share/default_pfx/drive_c/windows/system32"
+[ -d "$DEFAULT_SYS32" ] \
+    || echo "warning: $DEFAULT_SYS32 not found - it will be created on first launch" >&2
 
-if [ -f build/xodus-xgameruntime/xgameruntime.dll.threading ]; then
-    cp -f build/xodus-xgameruntime/xgameruntime.dll.threading "$DEST/"
-else
-    echo "warning: build/xodus-xgameruntime is empty - XThreading will fall back to WineGDK's own implementation" >&2
-fi
+shopt -s nullglob
+for src in build/extra/*.dll build/winegdk-dlls/* \
+           build/xodus-xgameruntime/xgameruntime.dll.threading; do
+    [ -f "$src" ] || continue
+    name="$(basename "$src")"
+    cp -f "$src" "$DEST/$name"
+    if [ -f "$DEFAULT_SYS32/$name" ] && ! [ "$DEST/$name" -ef "$DEFAULT_SYS32/$name" ]; then
+        cp -f "$src" "$DEFAULT_SYS32/$name"
+    fi
+done
+shopt -u nullglob
 
 if [ -f build/decoration-fix/winewayland.so ]; then
     cp -f build/decoration-fix/winewayland.so "$DEST_UNIX/winewayland.so"
@@ -118,26 +129,7 @@ else
     echo "warning: build/decoration-fix is incomplete - shipping stock (unfixed) winewayland.so" >&2
 fi
 
-# Keep default_pfx: Proton-CachyOS refuses to start without it ("Default
-# prefix is missing, something is very wrong."), unlike GE, which recreated
-# a deleted one. Instead refresh its copies of the dlls replaced above, so
-# new prefixes start from them, and touch wine.inf so existing prefixes get
-# a wineboot update.
-DEFAULT_SYS32="$PKG_DIR/files/share/default_pfx/drive_c/windows/system32"
-if [ -d "$DEFAULT_SYS32" ]; then
-    for src in build/extra/*.dll build/winegdk-dlls/* \
-               build/xodus-xgameruntime/xgameruntime.dll.threading; do
-        [ -f "$src" ] || continue
-        name="$(basename "$src")"
-        # Proton-CachyOS links most of these to the lib/wine copy, which the
-        # cp above already rewrote in place; only refresh real copies.
-        if [ -f "$DEFAULT_SYS32/$name" ] && ! [ "$DEST/$name" -ef "$DEFAULT_SYS32/$name" ]; then
-            cp -f "$DEST/$name" "$DEFAULT_SYS32/$name"
-        fi
-    done
-else
-    echo "warning: $DEFAULT_SYS32 not found - Proton-CachyOS needs default_pfx to start" >&2
-fi
+# Existing prefixes get a wineboot update when wine.inf is newer than them.
 touch "$PKG_DIR/files/share/wine/wine.inf"
 
 # Name the tree rather than ".", so the archive has no bare "./" entry

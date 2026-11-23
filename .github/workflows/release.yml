@@ -19,12 +19,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Restore cached winewayland.drv
+        # Inputs are fixed: the GE tag, the fix commit pinned in the script,
+        # and the script itself. On a hit the whole build is skipped.
+        # Bump the "v1" to force a rebuild.
+        id: deco-cache
+        uses: actions/cache@v4
+        with:
+          path: build/decoration-fix
+          key: decoration-fix-v1-${{ env.PROTON_VERSION }}-${{ hashFiles('scripts/fix-wayland-decoration.sh') }}
       - name: Free disk space
+        if: steps.deco-cache.outputs.cache-hit != 'true'
         uses: jlumbroso/free-disk-space@main
         with:
           preinstalled-runtimes: true
           large-packages: false
       - name: Build fixed winewayland.drv
+        if: steps.deco-cache.outputs.cache-hit != 'true'
         # The full make output is far too large for the Actions log viewer
         # (it gets truncated), so keep it in a file and only echo milestones
         # and errors live. The full log is uploaded as an artifact below.
@@ -39,7 +50,7 @@ jobs:
         if: failure()
         run: tail -n 300 build/decoration-fix.log
       - name: Upload full build log
-        if: always()
+        if: always() && steps.deco-cache.outputs.cache-hit != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: decoration-fix-log

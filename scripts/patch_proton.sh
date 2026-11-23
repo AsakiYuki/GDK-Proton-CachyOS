@@ -43,7 +43,13 @@ BLOCK=$(cat <<'EOF'
                     ("XCurl.dll", "XCurl.dll")
                 ]
 
+                # Some entries are optional and not every build ships them
+                # (xgameruntime.dll.threading is Microsoft's native dll, not
+                # built from WineGDK). try_copy() raises on a missing source,
+                # which would abort prefix setup, so skip what is absent.
                 for (src,tgt) in dll_files:
+                    if not os.path.exists(g_proton.lib_dir + "wine/x86_64-windows/" + src):
+                        continue
                     try_copy(g_proton.lib_dir + "wine/x86_64-windows/" + src, "drive_c/windows/system32",
                             prefix=self.prefix_dir, track_file=tracked_files, link_debug=True)
 

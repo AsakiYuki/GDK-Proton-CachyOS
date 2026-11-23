@@ -41,10 +41,15 @@ for name in "${names[@]}"; do
     else
         echo "warning: ${name}.dll not found under $RESULT_LINK" >&2
     fi
-    # xgameruntime ships a sibling .dll.threading data file next to the dll
+    # xgameruntime.dll.threading is Microsoft's native xgameruntime.dll that
+    # WineGDK loads for XThreading. WineGDK does not build it, so it is only
+    # picked up if something placed it in the result tree; without it WineGDK
+    # falls back to its own XThreading implementation.
     sibling="$(find "$RESULT_LINK/" -iname "${name}.dll.threading" -print -quit)"
     if [ -n "$sibling" ]; then
         cp -f "$sibling" "$OUT_DIR/"
+    elif [ "$name" = xgameruntime ]; then
+        echo "warning: xgameruntime.dll.threading not found (native Microsoft dll, not built by WineGDK); WineGDK's own XThreading will be used" >&2
     fi
 done
 

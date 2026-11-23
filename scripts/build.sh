@@ -1,24 +1,41 @@
 #!/bin/bash
 # Assembles the final GDK-Proton package:
-#   stock GE-Proton release + patched winewayland.drv (Wayland decoration
+#   stock Proton-CachyOS release + patched winewayland.so (Wayland decoration
 #   fix, see scripts/fix-wayland-decoration.sh) + WineGDK component dlls
-#   (see scripts/collect-winegdk-dlls.sh) + small mingw-w64 runtime dlls
-#   (openssl/curl/zlib/... for Minecraft Bedrock's online functionality).
+#   (see scripts/collect-winegdk-dlls.sh) + Xodus' xgameruntime as
+#   xgameruntime.dll.threading (see scripts/build-xodus-xgameruntime.sh) +
+#   small mingw-w64 runtime dlls (openssl/curl/zlib/... for Minecraft
+#   Bedrock's online functionality).
 #
-# Expects build/decoration-fix/ and build/winegdk-dlls/ to already be
-# populated (either by CI downloading those job artifacts, or by running
-# scripts/fix-wayland-decoration.sh and scripts/collect-winegdk-dlls.sh
+# Expects build/decoration-fix/, build/winegdk-dlls/ and
+# build/xodus-xgameruntime/ to already be populated (either by CI
+# downloading those job artifacts, or by running the three scripts above
 # locally first).
+#
+# Environment:
+#   CACHYOS_TAG   Proton-CachyOS release tag (default cachyos-11.0-20261015-slr)
+#   CACHYOS_ARCH  x86_64 (default, any x86-64 CPU) or x86_64_v3 (AVX2 CPUs)
 
 set -euo pipefail
 
-export PROTON_VERSION="${PROTON_VERSION:-Proton11-12}"
+CACHYOS_TAG="${CACHYOS_TAG:-cachyos-11.0-20261015-slr}"
+CACHYOS_ARCH="${CACHYOS_ARCH:-x86_64}"
+case "$CACHYOS_ARCH" in
+    x86_64|x86_64_v3) ;;
+    *) echo "CACHYOS_ARCH must be x86_64 or x86_64_v3, not '$CACHYOS_ARCH'" >&2; exit 1 ;;
+esac
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
-PROTON_RELEASE="https://github.com/GloriousEggroll/proton-ge-custom/releases/download/GE-${PROTON_VERSION}/GE-${PROTON_VERSION}-x86_64.tar.gz"
+# cachyos-11.0-20261015-slr -> proton-cachyos-11.0-20261015-slr-x86_64
+UPSTREAM_NAME="proton-${CACHYOS_TAG}-${CACHYOS_ARCH}"
+UPSTREAM_URL="https://github.com/CachyOS/proton-cachyos/releases/download/${CACHYOS_TAG}/${UPSTREAM_NAME}"
+# GDK-Proton-cachyos-11.0-20261015-slr (plus -x86_64_v3 for that build)
+PKG_NAME="GDK-Proton-${CACHYOS_TAG}"
+[ "$CACHYOS_ARCH" = "x86_64" ] || PKG_NAME="${PKG_NAME}-${CACHYOS_ARCH}"
+PKG_DIR="build/${PKG_NAME}"
 
 # mingw-w64-x86_64 runtime dlls needed for Minecraft Bedrock's online/TLS support
 brotli=('brotli-1.2.0-1' 'libbrotlicommon libbrotlidec')
@@ -56,19 +73,28 @@ mv -f libcurl-4.dll XCurl.dll
 
 popd >/dev/null
 
-echo "Downloading GE-${PROTON_VERSION}..."
-curl -fsSL "$PROTON_RELEASE" -o build/proton.tar.gz
-rm -rf "build/GDK-${PROTON_VERSION}"
-mkdir -p "build/GDK-${PROTON_VERSION}"
-tar -xf build/proton.tar.gz -C "build/GDK-${PROTON_VERSION}" --strip-components=1
-rm -f build/proton.tar.gz
+echo "Downloading ${UPSTREAM_NAME}..."
+curl -fsSL "${UPSTREAM_URL}.tar.xz" -o "build/${UPSTREAM_NAME}.tar.xz"
+curl -fsSL "${UPSTREAM_URL}.sha512sum" -o "build/${UPSTREAM_NAME}.sha512sum"
+(cd build && sha512sum -c "${UPSTREAM_NAME}.sha512sum")
+rm -rf "$PKG_DIR"
+mkdir -p "$PKG_DIR"
+tar -xJf "build/${UPSTREAM_NAME}.tar.xz" -C "$PKG_DIR" --strip-components=1
+rm -f "build/${UPSTREAM_NAME}.tar.xz" "build/${UPSTREAM_NAME}.sha512sum"
 
-pushd build >/dev/null
-"$SCRIPT_DIR/patch_proton.sh"
-popd >/dev/null
+"$SCRIPT_DIR/patch_proton.sh" "$PKG_DIR/proton"
 
-DEST="build/GDK-${PROTON_VERSION}/files/lib/wine/x86_64-windows"
-DEST_UNIX="build/GDK-${PROTON_VERSION}/files/lib/wine/x86_64-unix"
+# Register under our own name, so Steam lists it next to (not in place of)
+# a stock Proton-CachyOS install.
+sed -i -E \
+    -e "s|^([[:space:]]*)\"${UPSTREAM_NAME}\"([[:space:]]*//.*)?$|\\1\"${PKG_NAME}\"\\2|" \
+    -e "s|(\"display_name\"[[:space:]]*)\"[^\"]*\"|\\1\"${PKG_NAME}\"|" \
+    "$PKG_DIR/compatibilitytool.vdf"
+grep -q "\"${PKG_NAME}\"" "$PKG_DIR/compatibilitytool.vdf" \
+    || { echo "could not rename the tool in compatibilitytool.vdf" >&2; exit 1; }
+
+DEST="$PKG_DIR/files/lib/wine/x86_64-windows"
+DEST_UNIX="$PKG_DIR/files/lib/wine/x86_64-unix"
 
 cp -f build/extra/*.dll "$DEST/"
 
@@ -78,36 +104,26 @@ else
     echo "warning: build/winegdk-dlls is empty - package will be missing GDK component dlls (xgameruntime etc.)" >&2
 fi
 
-# (Not `ls a b | head -1`: ls exits 2 when either is missing, which kills
-# the script silently under pipefail.)
-FIX_SO=""
-for f in build/decoration-fix/winewayland.so build/decoration-fix/winewayland.drv.so; do
-    if [ -e "$f" ]; then FIX_SO="$f"; break; fi
-done
-if [ -n "$FIX_SO" ]; then
-    # Install under whichever unix lib name this Proton release ships.
-    if [ -e "$DEST_UNIX/winewayland.so" ]; then
-        cp -f "$FIX_SO" "$DEST_UNIX/winewayland.so"
-    else
-        cp -f "$FIX_SO" "$DEST_UNIX/winewayland.drv.so"
-    fi
-    if [ -f build/decoration-fix/winewayland.drv ]; then
-        cp -f build/decoration-fix/winewayland.drv "$DEST/"
-    fi
+if [ -f build/xodus-xgameruntime/xgameruntime.dll.threading ]; then
+    cp -f build/xodus-xgameruntime/xgameruntime.dll.threading "$DEST/"
 else
-    echo "warning: build/decoration-fix is incomplete - shipping stock (unfixed) winewayland.drv" >&2
+    echo "warning: build/xodus-xgameruntime is empty - XThreading will fall back to WineGDK's own implementation" >&2
+fi
+
+if [ -f build/decoration-fix/winewayland.so ]; then
+    cp -f build/decoration-fix/winewayland.so "$DEST_UNIX/winewayland.so"
+else
+    echo "warning: build/decoration-fix is incomplete - shipping stock (unfixed) winewayland.so" >&2
 fi
 
 # Force wine to refresh its bundled prefix so the new/replaced dlls get
 # picked up on next first run.
-touch "build/GDK-${PROTON_VERSION}/files/share/wine/wine.inf"
-rm -rf "build/GDK-${PROTON_VERSION}/files/share/default_pfx"
+touch "$PKG_DIR/files/share/wine/wine.inf"
+rm -rf "$PKG_DIR/files/share/default_pfx"
 
-mkdir -p build/proton-package
-rm -rf "build/proton-package/GDK-${PROTON_VERSION}"
-mv "build/GDK-${PROTON_VERSION}" "build/proton-package/GDK-${PROTON_VERSION}"
 # Name the tree rather than ".", so the archive has no bare "./" entry
 # (BedrockOnLinux's extractor rejects it as an unsafe path).
-tar -czf "GDK-${PROTON_VERSION}-x86_64.tar.gz" -C "build/proton-package" "GDK-${PROTON_VERSION}"
+tar -czf "${PKG_NAME}-x86_64.tar.gz" -C build "$PKG_NAME"
+rm -rf "$PKG_DIR"
 
-echo "Built GDK-${PROTON_VERSION}-x86_64.tar.gz"
+echo "Built ${PKG_NAME}-x86_64.tar.gz"

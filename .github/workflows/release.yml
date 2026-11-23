@@ -3,52 +3,60 @@ name: Build and release GDK-Proton
 on:
   workflow_dispatch:
     inputs:
-      proton_version:
-        description: "GE-Proton version to base the build on (e.g. Proton11-12)"
+      cachyos_tag:
+        description: "Proton-CachyOS release tag to base the build on (e.g. cachyos-11.0-20261015-slr)"
         required: true
-        default: "Proton11-12"
+        default: "cachyos-11.0-20261015-slr"
+      cachyos_arch:
+        description: "Proton-CachyOS build: x86_64 (any CPU) or x86_64_v3 (AVX2 CPUs)"
+        required: true
+        default: "x86_64"
+        type: choice
+        options:
+          - x86_64
+          - x86_64_v3
 
 permissions:
   contents: write
 
 env:
-  PROTON_VERSION: ${{ github.event.inputs.proton_version }}
+  CACHYOS_TAG: ${{ github.event.inputs.cachyos_tag }}
+  CACHYOS_ARCH: ${{ github.event.inputs.cachyos_arch }}
 
 jobs:
   build-decoration-fix:
     runs-on: ubuntu-latest
-    # Optional: without it build.sh ships GE's stock winewayland.drv, which
+    # Optional: without it build.sh ships CachyOS' stock winewayland.so, which
     # works everywhere except compositors that need the #955 fix (niri).
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - name: Restore cached winewayland.drv
-        # Inputs are fixed: the GE tag, the fix commit pinned in the script,
-        # and the script itself. On a hit the whole build is skipped.
-        # Bump the "v1" to force a rebuild.
+      - name: Restore cached winewayland.so
+        # Inputs are fixed: the CachyOS tag (which pins the wine commit and
+        # SDK image) and the script itself. On a hit the build is skipped.
+        # Bump the "v2" to force a rebuild.
         id: deco-cache
         uses: actions/cache@v4
         with:
           path: build/decoration-fix
-          key: decoration-fix-v1-${{ env.PROTON_VERSION }}-${{ hashFiles('scripts/fix-wayland-decoration.sh') }}
+          key: decoration-fix-v2-${{ env.CACHYOS_TAG }}-${{ hashFiles('scripts/fix-wayland-decoration.sh') }}
       - name: Free disk space
         if: steps.deco-cache.outputs.cache-hit != 'true'
         uses: jlumbroso/free-disk-space@main
         with:
           preinstalled-runtimes: true
           large-packages: false
-      - name: Build fixed winewayland.drv
+      - name: Build fixed winewayland.so
         if: steps.deco-cache.outputs.cache-hit != 'true'
-        # The full make output is far too large for the Actions log viewer
-        # (it gets truncated), so keep it in a file and only echo milestones
-        # and errors live. The full log is uploaded as an artifact below.
+        # The full configure/make output is far too large for the Actions
+        # log viewer, so keep it in a file and only echo milestones and
+        # errors live. The full log is uploaded as an artifact below.
         shell: bash
         run: |
           mkdir -p build
           ./scripts/fix-wayland-decoration.sh 2>&1 \
             | tee build/decoration-fix.log \
-            | { grep --line-buffered -E '^(Cloning|Fetching|Registered|Initializing|Building|Fixed|Fix |GNU make|Could not|Applying|Applied|Wine GDI|warning:)|error:|Error [0-9]+' || true; } \
-            | { grep --line-buffered -v -E "^libtool: +error: +(Could not determine the host path|Continuing, but uninstalled|')" || true; }
+            | { grep --line-buffered -E '^(Cloning|Fetching|Wine|SDK image|Applied|Building|Fixed|NEEDED|configure:|warning:)|[0-9]+[-:] .*zxdg_decoration|version < 2|error:|Error [0-9]+' || true; }
       - name: Show end of build log on failure
         if: failure()
         run: tail -n 300 build/decoration-fix.log
@@ -68,13 +76,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Restore cached GDK dlls
-        # The sources are SHA-256 pinned inside the script, so its hash
+        # The source is SHA-256 pinned inside the script, so its hash
         # identifies the result. On a hit the download is skipped.
         id: dll-cache
         uses: actions/cache@v4
         with:
           path: build/winegdk-dlls
-          key: winegdk-dlls-v2-${{ hashFiles('scripts/collect-winegdk-dlls.sh') }}
+          key: winegdk-dlls-v3-${{ hashFiles('scripts/collect-winegdk-dlls.sh') }}
       - name: Collect GDK dlls
         if: steps.dll-cache.outputs.cache-hit != 'true'
         run: ./scripts/collect-winegdk-dlls.sh
@@ -83,8 +91,34 @@ jobs:
           name: winegdk-dlls
           path: build/winegdk-dlls/
 
+  build-xodus-xgameruntime:
+    runs-on: ubuntu-latest
+    # Xodus' code needs C23 (thread_local in C) and newer WinRT headers than
+    # Ubuntu's mingw-w64 has; Fedora's mingw toolchain builds it as is.
+    container: fedora:45
+    steps:
+      - name: Install toolchain
+        run: dnf install -q -y git tar zstd cmake ninja-build mingw64-gcc-c++ mingw64-headers mingw-w64-tools
+      - uses: actions/checkout@v4
+      - name: Restore cached xgameruntime
+        # The Xodus commit is pinned inside the script.
+        id: xgr-cache
+        uses: actions/cache@v4
+        with:
+          path: build/xodus-xgameruntime
+          key: xodus-xgameruntime-v1-${{ hashFiles('scripts/build-xodus-xgameruntime.sh') }}
+      - name: Build xgameruntime.dll.threading
+        if: steps.xgr-cache.outputs.cache-hit != 'true'
+        run: |
+          git config --global --add safe.directory '*'
+          ./scripts/build-xodus-xgameruntime.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xodus-xgameruntime
+          path: build/xodus-xgameruntime/
+
   package-and-release:
-    needs: [build-decoration-fix, build-winegdk]
+    needs: [build-decoration-fix, build-winegdk, build-xodus-xgameruntime]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -98,11 +132,21 @@ jobs:
         with:
           name: winegdk-dlls
           path: build/winegdk-dlls
+      - uses: actions/download-artifact@v4
+        with:
+          name: xodus-xgameruntime
+          path: build/xodus-xgameruntime
       - name: Build package
-        run: ./scripts/build.sh
+        id: pkg
+        shell: bash
+        run: |
+          ./scripts/build.sh
+          name="GDK-Proton-${CACHYOS_TAG}"
+          [ "$CACHYOS_ARCH" = x86_64 ] || name="${name}-${CACHYOS_ARCH}"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: GDK-${{ env.PROTON_VERSION }}-${{ github.run_number }}
-          name: GDK-${{ env.PROTON_VERSION }}
-          files: GDK-${{ env.PROTON_VERSION }}-x86_64.tar.gz
+          tag_name: ${{ steps.pkg.outputs.name }}-${{ github.run_number }}
+          name: ${{ steps.pkg.outputs.name }}
+          files: ${{ steps.pkg.outputs.name }}-x86_64.tar.gz

@@ -1,163 +1,177 @@
 #!/bin/bash
-# Rebuilds winewayland.drv against the exact wine commit used by a given
-# GE-Proton release, with the upstream fix for proton-ge-custom#955 applied
-# (zxdg_decoration_manager_v1 was only bound at version 2, so compositors
-# that only offer version 1 - niri and other Smithay-based compositors -
-# never got server-side decorations and fell back to Wine's bare title bar).
+# Rebuilds Proton-CachyOS' winewayland.so with the fix for
+# proton-ge-custom#955: winewayland bound zxdg_decoration_manager_v1 at
+# version 2 unconditionally, so compositors that only offer version 1 (niri
+# and other Smithay-based compositors) never got server-side decorations and
+# Wine fell back to its own bare title bar. The fix binds
+# min(advertised version, 2). wine-cachyos still has the old bind as of
+# cachyos-11.0-20261015-slr.
 #
-# The fix landed on proton-ge-custom's master branch (commit 52c97a2) after
-# GE-Proton11-12 was tagged, so it isn't in the released tarball yet. This
-# script registers just that one patch on the release tag, applies GE's full
-# patch set (protonprep) so the build matches the released wine, and rebuilds
-# only the winewayland.drv module (via `make module=winewayland.drv module`)
-# instead of a full Proton build.
+# The unix side of a wine driver has to match the release's win32u/ntdll
+# exactly (win32u rejects a WINE_GDI_DRIVER_VERSION mismatch), so this
+# builds from the exact wine-cachyos commit the release tag pins as its
+# `wine` submodule, inside the exact Steam Runtime SDK image the tag's
+# Makefile.in builds with, and only builds dlls/winewayland.drv's unix lib
+# (plus the tools and win32u/ntdll it links against). The fix is unix-only,
+# so the release's PE winewayland.drv stays as is.
 #
-# Requires: git, docker (or podman), GNU make (nix-shell -p gnumake if absent).
+# Requires: git, curl, docker (or podman as DOCKER=podman).
 #
-# Output: build/decoration-fix/winewayland.drv.so (x86_64-unix)
+# Output: build/decoration-fix/winewayland.so (x86_64-unix)
 
 set -euo pipefail
 
-PROTON_VERSION="${PROTON_VERSION:-Proton11-12}"
-GE_TAG="GE-${PROTON_VERSION}"
-FIX_COMMIT="52c97a2d76856d1fe5df8dbdbf6984d5c4097d4a"
-FIX_ISSUE="https://github.com/GloriousEggroll/proton-ge-custom/issues/955"
+CACHYOS_TAG="${CACHYOS_TAG:-cachyos-11.0-20261015-slr}"
+DOCKER="${DOCKER:-docker}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORK_DIR="$ROOT_DIR/build/decoration-fix-src"
 OUT_DIR="$ROOT_DIR/build/decoration-fix"
+WINE_SRC="$WORK_DIR/wine"
+WINE_OBJ="$WORK_DIR/obj-wine-x86_64"
 
-mkdir -p "$OUT_DIR"
+mkdir -p "$WORK_DIR" "$OUT_DIR"
 
-if [ ! -d "$WORK_DIR" ]; then
-    echo "Cloning proton-ge-custom at $GE_TAG..."
-    git clone --depth 1 --branch "$GE_TAG" https://github.com/GloriousEggroll/proton-ge-custom.git "$WORK_DIR"
+# --- Resolve what the release tag was built from ---------------------------
+
+PROTON_SRC="$WORK_DIR/proton-cachyos"
+if [ ! -d "$PROTON_SRC/.git" ] || [ "$(git -C "$PROTON_SRC" describe --tags --exact-match 2>/dev/null)" != "$CACHYOS_TAG" ]; then
+    rm -rf "$PROTON_SRC"
+    echo "Cloning proton-cachyos at $CACHYOS_TAG (no submodules)..."
+    git clone -q --depth 1 --branch "$CACHYOS_TAG" https://github.com/CachyOS/proton-cachyos.git "$PROTON_SRC"
 fi
 
-cd "$WORK_DIR"
-
-if git log -1 --format=%H | grep -q "$FIX_COMMIT"; then
-    echo "Fix already present at HEAD, skipping cherry-pick."
-elif grep -rq "winewayland-bind-xdg-decoration-manager-version-1" patches/ 2>/dev/null; then
-    echo "Fix for #955 already present in this tag, skipping cherry-pick."
-else
-    # A plain cherry-pick conflicts because protonprep-valve-staging.sh's
-    # apply_patch list diverged between the tag and master. The fix is just
-    # one new patch file + one registration line, so apply those directly.
-    echo "Fetching fix for $FIX_ISSUE..."
-    git fetch --depth 1 origin "$FIX_COMMIT"
-    PATCH_REL="patches/wine-hotfixes/pending/winewayland-bind-xdg-decoration-manager-version-1.patch"
-    mkdir -p "$(dirname "$PATCH_REL")"
-    git show "$FIX_COMMIT:$PATCH_REL" > "$PATCH_REL"
-
-    PREP="patches/protonprep-valve-staging.sh"
-    LAST_LINE="$(grep -n 'apply_patch "../patches/wine-hotfixes/pending/' "$PREP" | tail -1 | cut -d: -f1)"
-    if [ -z "$LAST_LINE" ]; then
-        echo "Could not find wine-hotfixes/pending apply_patch block in $PREP" >&2
-        exit 1
-    fi
-    awk -v n="$LAST_LINE" -v p="../$PATCH_REL" '
-        { print }
-        NR == n {
-            print "    # niri/Smithay offer xdg-decoration version 1, which got no server-side decorations (#955)"
-            print "    apply_patch \"" p "\""
-        }' "$PREP" > "$PREP.new"
-    chmod --reference="$PREP" "$PREP.new"
-    mv "$PREP.new" "$PREP"
-    echo "Registered $PATCH_REL in $PREP after line $LAST_LINE."
-fi
-
-echo "Initializing wine submodules..."
-git submodule update --init --recursive --depth 1
-
-# The wine submodule is plain Valve wine; GE's release is that tree plus the
-# patch set applied by protonprep, which among other things bumps
-# WINE_GDI_DRIVER_VERSION (108 -> 111 for GE-Proton11-12). Building the
-# module without it produces a driver the release's win32u rejects
-# ("__wine_set_user_driver version mismatch"), leaving Wine with no display
-# driver under PROTON_USE_WAYLAND=1. protonprep resets each submodule before
-# patching, so it is safe to rerun on an existing work tree.
-echo "Applying GE patch set (protonprep-valve-staging.sh)..."
-./patches/protonprep-valve-staging.sh > "$OUT_DIR/protonprep.log" 2>&1 || {
-    tail -n 50 "$OUT_DIR/protonprep.log" >&2
-    echo "protonprep-valve-staging.sh failed" >&2
-    exit 1
-}
-# apply_patch (patch -Np1) skips what it cannot apply and carries on, and
-# GE's own release is built from this same script and tag with the same
-# messages (GE-Proton11-12 has one "can't find file to patch"). So report
-# them, with the patch they came from, but do not fail on them: the module
-# is built from the same tree as the release either way.
-if grep -qE "FAILED|can't find file to patch|malformed patch|Reversed \(or previously applied\) patch detected" "$OUT_DIR/protonprep.log"; then
-    echo "warning: protonprep reported patches it skipped (as in GE's own build):"
-    grep -nE -A8 "FAILED|can't find file to patch|malformed patch|Reversed \(or previously applied\) patch detected" \
-        "$OUT_DIR/protonprep.log" | grep -E "FAILED|can't find|malformed|Reversed|^[0-9]+-\|?(---|\+\+\+|diff) " | sed 's/^/warning:   /'
-fi
-# What this job exists for must have landed, though.
-if ! grep -q "version < 2 ? version : 2" wine/dlls/winewayland.drv/wayland.c; then
-    echo "error: the #955 decoration patch did not apply to wine/dlls/winewayland.drv/wayland.c" >&2
+WINE_COMMIT="$(git -C "$PROTON_SRC" ls-tree HEAD wine | awk '{print $3}')"
+WINE_URL="$(git -C "$PROTON_SRC" config -f .gitmodules submodule.wine.url)"
+STEAMRT_IMAGE="$(sed -n 's/^[[:space:]]*STEAMRT_IMAGE ?= \(.*x86_64.*\)$/\1/p' "$PROTON_SRC/Makefile.in" | head -1)"
+if [ -z "$WINE_COMMIT" ] || [ -z "$WINE_URL" ] || [ -z "$STEAMRT_IMAGE" ]; then
+    echo "Could not read the wine submodule / STEAMRT_IMAGE from $CACHYOS_TAG" >&2
     exit 1
 fi
-echo "Applied the #955 decoration fix."
-echo "Wine GDI driver version: $(grep -m1 -o 'WINE_GDI_DRIVER_VERSION [0-9]*' wine/include/wine/gdi_driver.h)"
+echo "Wine: $WINE_URL @ $WINE_COMMIT"
+echo "SDK image: $STEAMRT_IMAGE"
 
-MAKE_BIN="make"
-if ! command -v make >/dev/null 2>&1; then
-    echo "GNU make not found on PATH, using nix-shell -p gnumake."
-    MAKE_BIN="nix-shell -p gnumake --run"
+# The SDK's xkbcommon has no xkbregistry, which winewayland needs; Proton
+# builds its own from this submodule (steamrtdeps/build-libxkbcommon.mk) and
+# ships it in files/lib, so build the same one to compile against.
+if [ ! -f "$PROTON_SRC/steamrtdeps/libxkbcommon/meson.build" ]; then
+    echo "Fetching proton-cachyos' libxkbcommon submodule..."
+    git -C "$PROTON_SRC" submodule update -q --init --depth 1 steamrtdeps/libxkbcommon
 fi
 
-# `make module=... module` waits on wine-configure, which by default first
-# builds every WINE_DEPENDS entry: ffmpeg, openfst, kaldi, vosk, piper, openxr,
-# vkd3d. winewayland.drv needs none of the speech/XR libs, and piper in
-# particular fails in a clean checkout (its onnxruntime ExternalProject
-# extracts to the wrong path). Command-line variables override Makefile.in's
-# assignments and are forwarded into the SteamRT container via MAKEOVERRIDES,
-# so trim the list to what wine's configure actually requires here:
-#   ffmpeg            - WINE_AUTOCONF_ARGS passes --with-ffmpeg (hard error if missing)
-#   libxml2/libxkbcommon - wayland driver (xkbcommon + xkbregistry)
-#   libpcap           - kept to match the release configure
-#   vkd3d             - VKD3D_PE_LIBS are hardcoded to its build output
-MODULE_DEPS=(
-    'WINE_DEPENDS=ffmpeg libxml2 libxkbcommon libpcap'
-    'WINE_x86_64_DEPENDS=vkd3d'
-    'WINE_aarch64_DEPENDS='
-)
-echo "Building winewayland.drv module (this pulls the SteamRT SDK container on first run)..."
-if [ "$MAKE_BIN" = "make" ]; then
-    make enable_ccache=0 "${MODULE_DEPS[@]}" module=winewayland.drv module
-else
-    nix-shell -p gnumake --run "make enable_ccache=0 $(printf '%q ' "${MODULE_DEPS[@]}") module=winewayland.drv module"
-fi
+# --- Fetch wine and apply the fix ------------------------------------------
 
-# Wine 10+ names the unix side winewayland.so (older: winewayland.drv.so).
-# The GE `module` rule copies only the unix lib into build/winewayland.drv/,
-# so also look in the x86_64 object dir. The #955 fix only touches unix code,
-# so the PE side is optional.
-OBJ_DIR="build/build--local/obj-wine-x86_64/dlls/winewayland.drv"
-SO_PATH=""
-for f in build/winewayland.drv/lib/wine/x86_64-unix/winewayland.so \
-         build/winewayland.drv/lib/wine/x86_64-unix/winewayland.drv.so \
-         "$OBJ_DIR/winewayland.so" "$OBJ_DIR/winewayland.drv.so"; do
-    if [ -e "$f" ]; then SO_PATH="$f"; break; fi
-done
-if [ -z "$SO_PATH" ]; then
-    echo "Build did not produce winewayland.so / winewayland.drv.so" >&2
+if [ ! -d "$WINE_SRC/.git" ]; then
+    git init -q "$WINE_SRC"
+    git -C "$WINE_SRC" remote add origin "$WINE_URL"
+fi
+if [ "$(git -C "$WINE_SRC" rev-parse -q --verify HEAD 2>/dev/null)" != "$WINE_COMMIT" ]; then
+    echo "Fetching wine-cachyos@${WINE_COMMIT:0:12}..."
+    git -C "$WINE_SRC" fetch -q --depth 1 origin "$WINE_COMMIT"
+    git -C "$WINE_SRC" checkout -q --detach -f FETCH_HEAD
+    rm -rf "$WINE_OBJ"
+fi
+git -C "$WINE_SRC" checkout -q -- dlls/winewayland.drv/wayland.c
+
+WAYLAND_C="$WINE_SRC/dlls/winewayland.drv/wayland.c"
+OLD_BIND='&zxdg_decoration_manager_v1_interface, 2);'
+NEW_BIND='\&zxdg_decoration_manager_v1_interface,\n                             version < 2 ? version : 2);'
+if grep -qF "$OLD_BIND" "$WAYLAND_C"; then
+    sed -i "s|$OLD_BIND|$NEW_BIND|" "$WAYLAND_C"
+elif ! grep -q 'zxdg_decoration_manager_v1_interface' "$WAYLAND_C"; then
+    echo "error: no zxdg_decoration_manager_v1 bind in $WAYLAND_C" >&2
     exit 1
+fi
+# (Other binds in this file already use the same min() idiom, so look at the
+# decoration bind itself.)
+if ! grep -A1 'zxdg_decoration_manager_v1_interface' "$WAYLAND_C" | grep -q 'version < 2 ? version : 2'; then
+    echo "error: the #955 decoration fix did not apply to $WAYLAND_C" >&2
+    grep -n -A2 'zxdg_decoration_manager_v1_interface' "$WAYLAND_C" >&2 || true
+    exit 1
+fi
+echo "Applied the #955 decoration fix:"
+grep -n -A1 'zxdg_decoration_manager_v1_interface' "$WAYLAND_C"
+echo "Wine GDI driver version: $(grep -m1 -o 'WINE_GDI_DRIVER_VERSION [0-9]*' "$WINE_SRC/include/wine/gdi_driver.h")"
+
+# --- Build only the unix lib, inside the release's SDK image ---------------
+
+echo "Building winewayland.so in the Steam Runtime SDK (pulls the image on first run)..."
+mkdir -p "$WINE_OBJ"
+"$DOCKER" run --rm \
+    -u "$(id -u):$(id -g)" \
+    -e HOME=/tmp \
+    -e XDG_CACHE_HOME=/obj/.cache \
+    -v "$WINE_SRC:/src" \
+    -v "$WINE_OBJ:/obj" \
+    -v "$PROTON_SRC:/proton:ro" \
+    -w /obj \
+    "$STEAMRT_IMAGE" \
+    bash -euo pipefail -c '
+        # The wine-cachyos git tree has no (or stale) generated files;
+        # prepare it the way Proton'"'"'s Makefile.in does (.wine-post-source,
+        # rules-wine-requests, rules-autoconf): its wine patches, then the
+        # vulkan headers/thunks, syscall tables, server protocol headers and
+        # configure script.
+        if [ ! -f /obj/.source-prepared ]; then
+            if [ -d /proton/patches/wine ]; then
+                for p in $(find /proton/patches/wine -name "*.patch" | sort); do
+                    patch -d /src -Np1 -i "$p"
+                done
+            fi
+            (cd /src && dlls/winevulkan/make_vulkan -x vk.xml -X video.xml)
+            (cd /src && tools/make_specfiles) || true
+            # server_protocol.h & co in git lag behind protocol.def
+            # (rules-wine-requests.mk regenerates them too).
+            (cd /src && tools/make_requests)
+            (cd /src && autoreconf -fi)
+            touch /obj/.source-prepared
+        fi
+        if [ ! -f /obj/deps/.xkbcommon-built ]; then
+            rm -rf /obj/deps /obj/xkbcommon-build
+            meson setup /obj/xkbcommon-build /proton/steamrtdeps/libxkbcommon \
+                --prefix=/obj/deps --libdir=lib --buildtype=release \
+                -Denable-xkbregistry=true -Denable-docs=false -Denable-x11=false \
+                -Denable-bash-completion=false -Denable-wayland=false \
+                -Denable-tools=false
+            ninja -C /obj/xkbcommon-build install
+            touch /obj/deps/.xkbcommon-built
+        fi
+        export PKG_CONFIG_PATH=/obj/deps/lib/pkgconfig
+        if [ ! -f Makefile ]; then
+            # Same base flags as the release; only x86_64 is needed since
+            # the PE side is not rebuilt.
+            /src/configure \
+                --enable-win64 --enable-archs=x86_64 \
+                --enable-build-id --disable-tests \
+                --with-wayland --without-x --without-oss \
+                CFLAGS="-O2 -g -Wno-stringop-overflow -Wno-incompatible-pointer-types"
+        fi
+        # The release links libwayland-egl and libxkbregistry; without them
+        # the driver would build but differ from (and lack features of) it.
+        for v in WAYLAND_CLIENT_LIBS WAYLAND_EGL_LIBS XKBCOMMON_LIBS XKBREGISTRY_LIBS; do
+            grep -qE "^$v *=.*-l" Makefile || { echo "configure did not find $v" >&2; exit 1; }
+        done
+        make -j"$(nproc)" dlls/winewayland.drv/winewayland.so
+        # The release ships its unix libs stripped, too.
+        strip --strip-unneeded -o /obj/winewayland.so dlls/winewayland.drv/winewayland.so
+    '
+
+SO_PATH="$WINE_OBJ/winewayland.so"
+[ -f "$SO_PATH" ] || { echo "Build did not produce $SO_PATH" >&2; exit 1; }
+
+# A driver built against different libs than the release's would fail to
+# load (or silently lose features), so its NEEDED list must match.
+if command -v readelf >/dev/null 2>&1; then
+    echo "NEEDED: $(readelf -d "$SO_PATH" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | tr '\n' ' ')"
 fi
 
 rm -f "$OUT_DIR"/winewayland*
-cp -f "$SO_PATH" "$OUT_DIR/$(basename "$SO_PATH")"
-echo "Unix lib: $SO_PATH"
+cp -f "$SO_PATH" "$OUT_DIR/winewayland.so"
+cat > "$OUT_DIR/decoration-fix.info" <<EOF
+cachyos_tag=$CACHYOS_TAG
+wine_commit=$WINE_COMMIT
+steamrt_image=$STEAMRT_IMAGE
+EOF
 
-for f in build/winewayland.drv/lib/wine/x86_64-windows/winewayland.drv \
-         "$OBJ_DIR/x86_64-windows/winewayland.drv" "$OBJ_DIR/winewayland.drv"; do
-    if [ -f "$f" ]; then
-        cp -f "$f" "$OUT_DIR/winewayland.drv"
-        echo "PE dll: $f"
-        break
-    fi
-done
-
-echo "Fixed winewayland.drv built at $OUT_DIR"
+echo "Fixed winewayland.so built at $OUT_DIR"

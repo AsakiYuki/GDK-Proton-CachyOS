@@ -1,10 +1,19 @@
 #!/bin/bash
-# Patch Proton GE to move extra dlls to the prefix.
+# Patch the Proton launcher script to copy the extra dlls into the prefix.
 # (from LukasPAH/GDK-Proton-Custom)
+#
+# Usage: patch_proton.sh <path to the proton script>
+# The block goes right before `if use_wined3d:` in prefix setup, which both
+# GE-Proton and Proton-CachyOS (Valve's script) have.
 
 set -euo pipefail
 
-FILE="./GDK-${PROTON_VERSION}/proton"
+FILE="${1:?usage: patch_proton.sh <path to proton script>}"
+
+if ! grep -qE '^ +if use_wined3d:' "$FILE"; then
+    echo "error: no 'if use_wined3d:' anchor in $FILE - Proton's script changed" >&2
+    exit 1
+fi
 
 # Skip if already patched
 if grep -q 'libasprintf-0.dll' "$FILE"; then
@@ -44,8 +53,8 @@ BLOCK=$(cat <<'EOF'
                 ]
 
                 # Some entries are optional and not every build ships them
-                # (xgameruntime.dll.threading is Microsoft's native dll, not
-                # built from WineGDK). try_copy() raises on a missing source,
+                # (xgameruntime.dll.threading is built separately from Xodus'
+                # xgameruntime). try_copy() raises on a missing source,
                 # which would abort prefix setup, so skip what is absent.
                 for (src,tgt) in dll_files:
                     if not os.path.exists(g_proton.lib_dir + "wine/x86_64-windows/" + src):

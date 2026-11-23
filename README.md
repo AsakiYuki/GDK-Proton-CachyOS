@@ -1,5 +1,5 @@
 # GDK-Proton
-This repository aims to share builds of GE-Proton, custom built with WineGDK and several extra components.
+This repository aims to share builds of [Proton-CachyOS](https://github.com/CachyOS/proton-cachyos), custom built with WineGDK, [Xodus](https://github.com/xodus-gaming/xgameruntime)' open-source XThreading, and several extra components.
 ```
 mingw-w64-x86_64-brotli
 mingw-w64-x86_64-c-ares
@@ -34,52 +34,64 @@ To get online functionality working, you will need to follow this guide, exactly
 if you've done everything correctly, your file structure should look a bit like the following image:
 <img width="772" height="240" alt="image" src="https://github.com/user-attachments/assets/d6e27fc3-ecb4-46be-9448-800535bbc1b6" />
 
-Now if you launch the game, the game should be able to phone home and get online. Just keep in mind that `XUser` is still not implemented so no Microsoft Account login yet.   
+Now if you launch the game, the game should be able to phone home and get online, and sign in to your Microsoft Account in-game (`XUser` comes from the WineGDK build described under [GDK component dlls](#gdk-component-dlls)).
 
 ## Building
 
 `.github/workflows/release.yml` builds and publishes a release from a GitHub
-Actions `workflow_dispatch` run (set the `proton_version` input, e.g.
-`Proton11-12`). It runs three jobs: `build-decoration-fix`, `build-winegdk`,
-then `package-and-release` which combines both outputs with GE-Proton and
-the mingw-w64 runtime dlls (`scripts/build.sh`) and publishes a GitHub
-Release.
+Actions `workflow_dispatch` run. Inputs: `cachyos_tag` (a Proton-CachyOS
+release tag, e.g. `cachyos-11.0-20261015-slr`) and `cachyos_arch` (`x86_64`
+for any CPU, `x86_64_v3` for AVX2 CPUs). It runs `build-decoration-fix`,
+`build-winegdk` and `build-xodus-xgameruntime`, then `package-and-release`,
+which overlays their outputs and the mingw-w64 runtime dlls onto the
+Proton-CachyOS release (`scripts/build.sh`) and publishes a GitHub Release
+named `GDK-Proton-<cachyos_tag>`. The tool registers in Steam under that
+name, so it sits next to a stock Proton-CachyOS rather than replacing it.
 
-To run the same steps locally: `scripts/fix-wayland-decoration.sh`, then
-`scripts/collect-winegdk-dlls.sh`, then `scripts/build.sh`.
+To run the same steps locally: `scripts/fix-wayland-decoration.sh`,
+`scripts/collect-winegdk-dlls.sh` and `scripts/build-xodus-xgameruntime.sh`
+(any order), then `scripts/build.sh`. Set `CACHYOS_TAG` / `CACHYOS_ARCH` to
+build another release.
 
 ### GDK component dlls
 
-`scripts/collect-winegdk-dlls.sh` takes the WineGDK dlls from the WineGDK
-build published by [BedrockOnLinux](https://github.com/Wyze3306/BedrockOnLinux)
-(Weather-OS/WineGDK plus their patch set), pinned by SHA-256. It carries
-XUser, so Minecraft signs in to the Microsoft account in-game, together with
-the WinRT dlls it depends on (`windows.web` JSON, `windows.ui`, `gameinput`,
-`windows.storage`). All are PE-only and load in GE-Proton's Wine. Microsoft's
-native `xgameruntime.dll.threading` (used for XThreading; WineGDK's fallback
-crashes the game) comes from Weather-OS/GDK-Proton `release10-32`, also
-pinned. The `WineGDK` submodule is no longer used by the build.
+WineGDK has been archived and split into
+[xodus-gaming/xgameruntime](https://github.com/xodus-gaming/xgameruntime)
+and [xodus-gaming/wine](https://github.com/xodus-gaming/wine). Xodus'
+xgameruntime only implements XThreading so far (every other GDK class
+returns `REGDB_E_CLASSNOTREG`), and Xodus Wine has no XUser either, so
+switching to it outright would lose the Microsoft sign-in. The package uses
+both, for now:
+
+- `scripts/collect-winegdk-dlls.sh` takes the WineGDK dlls from the build
+  published by [BedrockOnLinux](https://github.com/Wyze3306/BedrockOnLinux)
+  (Weather-OS/WineGDK plus their patch set), pinned by SHA-256. It carries
+  XUser, so Minecraft signs in to the Microsoft account in-game, together
+  with the WinRT dlls it depends on (`windows.web` JSON, `windows.ui`,
+  `gameinput`, `windows.storage`). All are PE-only and load in
+  Proton-CachyOS' Wine.
+- That `xgameruntime.dll` hands XThreading to a separate
+  `xgameruntime.dll.threading` (it calls that dll's `QueryApiImpl` for
+  `CLSID_XThreadingImpl`). This used to be Microsoft's native
+  xgameruntime.dll, because WineGDK's own fallback crashes Minecraft.
+  `scripts/build-xodus-xgameruntime.sh` now builds Xodus' xgameruntime from
+  a pinned commit and installs it under that name instead, so no Microsoft
+  binary ships. It needs a recent mingw-w64 (C23, newer WinRT headers); CI
+  builds it in a Fedora container.
+
+Once Xodus implements XUser and the rest of the GDK, its xgameruntime can
+replace WineGDK's outright.
 
 ### Wayland window decoration fix
 
 Running under a Wayland compositor that only offers `zxdg_decoration_manager_v1`
 version 1 (niri and other Smithay-based compositors) makes Wine fall back to
-its own bare title bar instead of server-side decorations - this is
-[proton-ge-custom#955](https://github.com/GloriousEggroll/proton-ge-custom/issues/955),
-fixed upstream on `master` but not yet in a tagged GE-Proton release.
-`scripts/fix-wayland-decoration.sh` rebuilds just `winewayland.drv` with that
-fix cherry-picked onto the release tag, instead of waiting for the next
-GE-Proton release or doing a full Proton rebuild.
-
-### Known issues (WIP)
-
-- `scripts/fix-wayland-decoration.sh`: building `winewayland.drv` through
-  proton-ge-custom's own `make module=...` target pulls in its full
-  optional-component dependency graph (ffmpeg/kaldi/vosk/piper/vkd3d/openxr),
-  and `piper`'s onnxruntime fetch currently fails in a clean checkout. The
-  script documents a direct-wine-configure workaround that gets further but
-  still hits an upstream `make_vulkan`/`vk.xml` incompatibility when
-  generating `include/wine/vulkan.h`.
-
-This needs more upstream investigation before the decoration fix builds
-reliably end-to-end.
+its own bare title bar instead of server-side decorations
+([proton-ge-custom#955](https://github.com/GloriousEggroll/proton-ge-custom/issues/955)).
+Proton-CachyOS' wine still binds version 2 unconditionally.
+`scripts/fix-wayland-decoration.sh` rebuilds just `winewayland.so` with the
+bind clamped to the advertised version. To match the release exactly, it
+builds the `wine-cachyos` commit the release tag pins, inside the Steam
+Runtime SDK image that tag's `Makefile.in` names, against the same
+`libxkbcommon` submodule Proton ships. The job is optional: if it fails, the
+package ships CachyOS' stock `winewayland.so`.

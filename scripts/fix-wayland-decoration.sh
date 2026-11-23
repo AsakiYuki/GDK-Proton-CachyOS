@@ -7,7 +7,8 @@
 #
 # The fix landed on proton-ge-custom's master branch (commit 52c97a2) after
 # GE-Proton11-12 was tagged, so it isn't in the released tarball yet. This
-# script cherry-picks just that one patch onto the release tag and rebuilds
+# script registers just that one patch on the release tag, applies GE's full
+# patch set (protonprep) so the build matches the released wine, and rebuilds
 # only the winewayland.drv module (via `make module=winewayland.drv module`)
 # instead of a full Proton build.
 #
@@ -69,6 +70,26 @@ fi
 
 echo "Initializing wine submodules..."
 git submodule update --init --recursive --depth 1
+
+# The wine submodule is plain Valve wine; GE's release is that tree plus the
+# patch set applied by protonprep, which among other things bumps
+# WINE_GDI_DRIVER_VERSION (108 -> 111 for GE-Proton11-12). Building the
+# module without it produces a driver the release's win32u rejects
+# ("__wine_set_user_driver version mismatch"), leaving Wine with no display
+# driver under PROTON_USE_WAYLAND=1. protonprep resets each submodule before
+# patching, so it is safe to rerun on an existing work tree.
+echo "Applying GE patch set (protonprep-valve-staging.sh)..."
+./patches/protonprep-valve-staging.sh > "$OUT_DIR/protonprep.log" 2>&1 || {
+    tail -n 50 "$OUT_DIR/protonprep.log" >&2
+    echo "protonprep-valve-staging.sh failed" >&2
+    exit 1
+}
+# apply_patch does not stop on a rejected patch, so check the log instead.
+if grep -nE "FAILED|can't find file to patch|malformed patch|Reversed \(or previously applied\) patch detected" "$OUT_DIR/protonprep.log" >&2; then
+    echo "GE patch set did not apply cleanly (see $OUT_DIR/protonprep.log)" >&2
+    exit 1
+fi
+echo "Wine GDI driver version: $(grep -m1 -o 'WINE_GDI_DRIVER_VERSION [0-9]*' wine/include/wine/gdi_driver.h)"
 
 MAKE_BIN="make"
 if ! command -v make >/dev/null 2>&1; then

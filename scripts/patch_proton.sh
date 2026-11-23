@@ -13,8 +13,9 @@
 #    the vblank every ~8 s and for about a second frames are shown twice and
 #    then dropped, so the game looks like 30 FPS while every overlay counts
 #    60. BedrockOnLinux sets that cap whenever Minecraft has vsync off. The
-#    frame latency drops from vkd3d-proton's default 3 to 1 as well, or the
-#    FIFO queue stays full and the mouse lags ~3 refreshes behind. An
+#    frame latency drops from vkd3d-proton's default 3 to 2 as well, or the
+#    FIFO queue stays full and the mouse lags ~3 refreshes behind (1 frame
+#    misses a vblank on every CPU spike of the game). An
 #    explicit VKD3D_SWAPCHAIN_PRESENT_MODE or VKD3D_SWAPCHAIN_LATENCY_FRAMES
 #    wins; PROTON_ALLOW_TEARING=1 turns all of it off.
 #
@@ -87,7 +88,9 @@ FIFO = f"""\
             self.env["VKD3D_SWAPCHAIN_PRESENT_MODE"] = "FIFO"
             # vkd3d-proton lets the game run 3 frames ahead by default, and
             # with FIFO the queue stays full, so input waits ~3 refreshes.
-            self.env.setdefault("VKD3D_SWAPCHAIN_LATENCY_FRAMES", "1")
+            # 1 frame leaves no slack: every CPU spike of the game's main
+            # thread misses a vblank (~1 per second on Minecraft). 2 does.
+            self.env.setdefault("VKD3D_SWAPCHAIN_LATENCY_FRAMES", "2")
             log("GDK-Proton: VKD3D_FRAME_RATE is set, presenting with FIFO and "
                 + self.env["VKD3D_SWAPCHAIN_LATENCY_FRAMES"] + " frame(s) of latency")
 
